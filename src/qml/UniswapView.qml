@@ -5,21 +5,13 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 
-// The Uniswap app.
+// The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
+// everything else under the two cards, and the active network visible at all times. This
+// view never moves the network; the wallet's Networks screen does, and this view follows.
 //
-// One question per screen, as the wallet: you sell one token and buy another, and everything
-// else — the route, the impact, the fee — sits under the two cards. Three sections, no action
-// button above the tab strip, and the active network visible at all times: a user must never
-// be able to mistake which chain they are swapping on. This app never moves the network; the
-// wallet's Networks screen does, and this view follows.
-//
-// This view holds no secret and sends nothing. It asks uniswap_module for a quote and the
-// calls that make it, and asks tx_sender_module to send them; the human's yes is taken by
-// evm_signer_ui, once, for every call of the swap.
-//
-// Rendering rule: every item showing a string this view did not author sets
-// `textFormat: Text.PlainText`. A token name or a module's error containing markup would
-// otherwise render as markup.
+// It holds no secret and sends nothing: uniswap_module quotes and builds, tx_sender_module
+// sends, evm_signer_ui takes the human's yes — once, for every call of the swap. Every
+// item showing a string this view did not author sets `textFormat: Text.PlainText`.
 Item {
     id: root
     objectName: "uniswapRoot"
