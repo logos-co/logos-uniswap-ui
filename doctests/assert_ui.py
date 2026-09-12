@@ -29,7 +29,9 @@ def check(label, got, want=True):
 
 
 print("0. the contract carries no secret, and never may")
-check("no password parameter on the .rep", re.search(r"password", REP, re.I) is None)
+REP_CODE = "\n".join(l.split("//")[0] for l in REP.splitlines())
+check("no password parameter on the .rep", re.search(r"password", REP_CODE, re.I) is None)
+check("...though the comment forbidding one is there", "NO password" in REP)
 check("...nor on the backend", re.search(r"password|privateKey|mnemonic|seed", CPP + HDR, re.I) is None)
 check("the view never calls a module itself", "logos.module(" in QML and ".call(" not in QML)
 check("the only intents are the three declared",
@@ -43,7 +45,10 @@ blocks = re.findall(r"LogosText \{(.*?)\n\s*\}", QML, re.S)
 def text_expr(block):
     m = re.search(r"\n\s*text: (.*?)(?=\n\s*[a-zA-Z.]+: |\n\s*\}|$)", block, re.S)
     return m.group(1) if m else ""
-rendered = [b for b in blocks if re.search(r"backend\.|modelData\.|root\.swapOutcome|\.error\b|\.reason\b|\.message\b|\.label\b|\.symbol\b|\.name\b", text_expr(b))]
+# A component's own property (`row.label`, `card.heading`) is authored here; a reply's is not.
+rendered = [b for b in blocks
+            if re.search(r"backend\.|modelData\.|root\.swapOutcome|\.error\b|\.reason\b|\.message\b|\.symbol\b|\.name\b", text_expr(b))
+            and not re.match(r"\s*(row|card|glyph)\.", text_expr(b))]
 lacking = [b.strip().splitlines()[0] for b in rendered if "textFormat: Text.PlainText" not in b]
 check("every LogosText whose text is a reply sets PlainText", lacking, [])
 check("...and that rule caught a real number of them", len(rendered) >= 12)
