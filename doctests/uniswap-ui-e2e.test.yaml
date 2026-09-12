@@ -1,0 +1,166 @@
+name: "The Uniswap app's three sections, in a real host with real modules"
+description: |
+  `doctests/run_tables.sh` already loads `UniswapView.qml` offscreen against a
+  **fabricated** backend, and asserts a great deal about it. What it cannot say is
+  whether the thing that ships works: whether the built plugin loads in a real
+  host, finds `eth_wallet_backend`, `uniswap_module` and `tx_sender_module`, and
+  comes up at all.
+
+  That is the whole of what this proves, and it is deliberately hermetic — no
+  chain, no funded key, no network. The keystore is empty, so the swap button
+  says there is no account, the balances are em-dashes and Activity has nothing
+  to show. Those are the honest answers for an empty wallet, and they are answers
+  only a wired-up backend can give: an unwired view renders nothing at all.
+
+sections:
+  - title: "Build the pieces"
+    step: true
+    text: |
+      The Uniswap app is one plugin over seven modules. `eth_wallet_backend`,
+      `uniswap_module` and `tx_sender_module` are dependencies of the view;
+      `eth_rpc_module`, `fee_module`, `keystore_module` and `token_list_module`
+      are dependencies of *them*, and only one level is bundled — so the rest are
+      staged here rather than assumed. `capability_module` is not bundled with
+      the standalone host either.
+    steps:
+      - title: "The host and the test driver"
+        run: |
+          set -euo pipefail
+          nix build 'github:logos-co/logos-standalone-app' --no-write-lock-file -o result-app
+          nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
+        code_block: |
+          nix build 'github:logos-co/logos-standalone-app' --no-write-lock-file -o result-app
+          nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
+      - title: "The runtime and driver really landed"
+        check_file: "result-app"
+
+      - title: "Build the Uniswap UI"
+        run: "nix build 'github:logos-co/logos-uniswap-ui{release}#install' --no-write-lock-file -o result-ui"
+        code_block: "nix build 'github:logos-co/logos-uniswap-ui#install' --no-write-lock-file -o result-ui"
+      - title: "It really produced a plugin"
+        check_file: "result-ui/plugins"
+
+      - title: "Build the wallet backend"
+        run: "nix build 'github:logos-co/logos-eth-wallet-backend#install' --no-write-lock-file -o result-backend"
+        code_block: "nix build 'github:logos-co/logos-eth-wallet-backend#install' --no-write-lock-file -o result-backend"
+      - title: "Build the Uniswap module"
+        run: "nix build 'github:logos-co/logos-evm-uniswap-module#install' --no-write-lock-file -o result-uniswap"
+        code_block: "nix build 'github:logos-co/logos-evm-uniswap-module#install' --no-write-lock-file -o result-uniswap"
+      - title: "Build the sender"
+        run: "nix build 'github:logos-co/logos-evm-tx-sender-module#install' --no-write-lock-file -o result-sender"
+        code_block: "nix build 'github:logos-co/logos-evm-tx-sender-module#install' --no-write-lock-file -o result-sender"
+      - title: "Build the keystore"
+        run: "nix build 'github:logos-co/logos-evm-keystore-module#install' --no-write-lock-file -o result-keystore"
+        code_block: "nix build 'github:logos-co/logos-evm-keystore-module#install' --no-write-lock-file -o result-keystore"
+      - title: "Build the RPC, fee and token-list modules"
+        run: |
+          set -euo pipefail
+          nix build 'github:logos-co/logos-evm-eth-rpc-module#install'    --no-write-lock-file -o result-rpc
+          nix build 'github:logos-co/logos-evm-fee-module#install'        --no-write-lock-file -o result-fee
+          nix build 'github:logos-co/logos-evm-token-list-module#install' --no-write-lock-file -o result-tokens
+        code_block: |
+          nix build 'github:logos-co/logos-evm-eth-rpc-module#install'    --no-write-lock-file -o result-rpc
+          nix build 'github:logos-co/logos-evm-fee-module#install'        --no-write-lock-file -o result-fee
+          nix build 'github:logos-co/logos-evm-token-list-module#install' --no-write-lock-file -o result-tokens
+      - title: "Build capability_module"
+        run: "nix build 'github:logos-co/logos-capability-module#install' --no-write-lock-file -o result-capability"
+        code_block: "nix build 'github:logos-co/logos-capability-module#install' --no-write-lock-file -o result-capability"
+
+      - title: "Stage one tree"
+        run: |
+          set -euo pipefail
+          rm -rf tree && mkdir -p tree/modules tree/plugins
+          for r in result-backend result-uniswap result-sender result-keystore result-rpc result-fee result-tokens result-capability; do
+            cp -r $r/modules/* tree/modules/
+          done
+          cp -r result-ui/plugins/* tree/plugins/
+          chmod -R u+w tree
+          ls tree/modules tree/plugins
+        code_block: |
+          mkdir -p tree/modules tree/plugins
+          cp -r result-*/modules/* tree/modules/
+          cp -r result-ui/plugins/* tree/plugins/
+        expect_contains:
+          - "eth_wallet_backend"
+          - "uniswap_module"
+          - "tx_sender_module"
+          - "keystore_module"
+          - "eth_rpc_module"
+          - "uniswap_ui"
+
+  - title: "The three sections, over real modules"
+    step: true
+    text: |
+      `QT_FORCE_STDERR_LOGGING=1` keeps the host's diagnostics out of journald, and
+      `QML_INSPECTOR_PORT=3768` is what the driver attaches to. Tabs are driven
+      through `selectTab()`; `pages.currentIndex` is read back so a `selectTab`
+      that silently did nothing is not mistaken for a section that rendered.
+    steps:
+      - title: "It comes up, and the modules are behind it"
+        ui_test:
+          launch: "env QT_FORCE_STDERR_LOGGING=1 QML_INSPECTOR_PORT=3768 ./result-app/bin/logos-standalone-app -p ./tree/plugins/uniswap_ui -m ./tree/modules -u ./userdir"
+          qt_mcp: "result-mcp"
+          launch_timeout: 600
+          tests:
+            - name: "The view rendered"
+              action: wait_for
+              texts: ["Activity"]
+              timeout: 60000
+            - name: "...and it is this app's view"
+              action: expect_property
+              find_value: "uniswapRoot"
+              property: "objectName"
+              value: "uniswapRoot"
+            - name: "The network chip answers, which only a wired wallet backend can do"
+              action: expect_property
+              find_value: "chainChip"
+              property: "text"
+              value: "ETHEREUM"
+            - name: "An empty keystore: the swap button says so"
+              action: expect_property
+              find_value: "swapButton"
+              property: "text"
+              value: "No account"
+            - name: "...and is disabled"
+              action: expect_property
+              find_value: "swapButton"
+              property: "enabled"
+              value: false
+            - name: "The sell side is seeded with the network coin"
+              action: expect_property
+              find_value: "sellTokenButton"
+              property: "text"
+              value: "ETH"
+              screenshot: "uniswap-ui-swap.png"
+
+            - name: "Activity is section 1"
+              action: call_method
+              find_value: "uniswapRoot"
+              method: "selectTab"
+              args: [1]
+            - name: "...and the pages followed"
+              action: expect_property
+              find_value: "pages"
+              property: "currentIndex"
+              value: 1
+            - name: "...saying an empty account has no swaps"
+              action: wait_for
+              texts: ["No swaps yet"]
+              timeout: 20000
+
+            - name: "Settings is section 2"
+              action: call_method
+              find_value: "uniswapRoot"
+              method: "selectTab"
+              args: [2]
+            - name: "...and it is showing"
+              action: expect_property
+              find_value: "pages"
+              property: "currentIndex"
+              value: 2
+            - name: "...with the deadline at its default"
+              action: expect_property
+              find_value: "deadlineField"
+              property: "text"
+              value: "30"
+              screenshot: "uniswap-ui-settings.png"
