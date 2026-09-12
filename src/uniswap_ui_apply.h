@@ -86,6 +86,9 @@ inline void applyQuote(ScopedState &s, const QString &reply, const QString &pric
         s.quote = reply;
         s.quoteRequest = priced;
         s.quoteStale = false;
+        // A quote that landed answers the refusal before it: a timer tick that succeeds
+        // after a keystroke that failed must not leave the failure standing beside it.
+        s.swapError.clear();
     } else if (replyOk(reply)) {
         withdrawQuote(s);
     } else if (interactive) {

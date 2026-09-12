@@ -391,6 +391,8 @@ Item {
         if (state === "insufficient") return "Insufficient " + swapPage.sellSymbol + " balance"
         if (state === "noGas") return "Not enough " + (root.nativeSymbol || "ETH") + " for gas"
         if (state === "noRoute") return "No route"
+        if (state === "error") return "Could not quote"
+        if (state === "feeError") return "Fee unavailable"
         if (state === "pricing") return "Pricing…"
         if (state === "acknowledge") return "Swap anyway"
         if (state === "pending") return "Waiting for approval"

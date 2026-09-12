@@ -219,7 +219,11 @@ Item {
             fake.swapError = "no route found"
             check("no route, in the module's words", probe.node("swapButton").text, "No route")
             check("...and the reason is on screen", probe.node("swapErrorLabel").text, "no route found")
+            fake.swapError = "no answer within 8699ms: operation timed out"
+            check("any other refusal says the quote failed, not that a swap is on offer", probe.node("swapButton").text, "Could not quote")
             fake.swapError = ""
+            probe.publishQuote({ fee: { ok: false, error: "the node did not answer" } })
+            check("a fee that could not be priced for another reason says so", probe.node("swapButton").text, "Fee unavailable")
             probe.publishQuote({})
             fake.pendingRequestId = "snd_9"
             check("a swap awaiting a human holds the button", probe.node("swapButton").text, "Waiting for approval")

@@ -90,6 +90,10 @@ int main()
         same("...and keeps it", s.quoteRequest, QStringLiteral("REQ1"));
         same("...saying nothing on the swap line", s.swapError, QString());
         expect("enterQuoteRequest", "withdraws on a changed request", enterQuoteRequest(s, QStringLiteral("REQ9")) && s.quoteRequest.isEmpty());
+        s = screen();
+        s.swapError = QStringLiteral("no answer within 8699ms");
+        applyQuote(s, q(R"({"ok":true,"chainId":11155111,"owner":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","amountOut":"5"})"), QStringLiteral("REQ1"), false);
+        same("a tick that succeeds after a failed keystroke clears the refusal", s.swapError, QString());
     }
 
     std::printf("\nthis app's swaps, out of a history it shares with the wallet\n");
