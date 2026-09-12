@@ -1,0 +1,25 @@
+{
+  "name": "uniswap_ui",
+  "display_name": "Uniswap",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "interface": "universal",
+  "category": "wallet",
+  "description": "Swap any two tokens on Uniswap from the wallet's accounts. Holds no key material and sends nothing itself.",
+  "author": "Logos Core Team",
+  "main": "uniswap_ui_plugin",
+  "icon": "src/icons/uniswap.png",
+  "view": "qml/UniswapView.qml",
+  "dependencies": ["eth_wallet_backend", "uniswap_module", "tx_sender_module"],
+  "uses": [
+    { "intent": "evm.signing.approve", "cardinality": "single" },
+    { "intent": "evm.accounts.manage", "cardinality": "single" },
+    { "intent": "evm.token_lists.configure", "cardinality": "single" }
+  ],
+  "codegen": { "rep": "src/uniswap_ui.rep" },
+  "nix": {
+    "external_libraries": [],
+    "packages": { "build": [], "runtime": ["qt6.qtdeclarative"] },
+    "cmake": { "find_packages": [], "extra_sources": [], "extra_include_dirs": [], "extra_link_libraries": [] }
+  }
+}
