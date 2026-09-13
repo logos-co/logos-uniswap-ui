@@ -344,10 +344,10 @@ sections:
     step: true
     text: |
       The view hands the sender exactly this: the built calls, each tagged as this app's,
-      the swap leg carrying its gas hint (behind an approval it cannot be estimated until
-      that lands), and a purpose the human reads. `send` reserves two nonces and asks the
-      keystore once; `send_status` after the approval collects both signatures and
-      broadcasts both.
+      no gas limit on either (`fee_module` estimates the swap behind its approval with
+      that allowance applied), and a purpose the human reads. `prepare` shows the estimate
+      and what it assumed; `send` reserves two nonces and asks the keystore once;
+      `send_status` after the approval collects both signatures and broadcasts both.
     steps:
       - title: "The bundle, as the app builds it"
         run: |
@@ -360,7 +360,6 @@ sections:
                       "meta": {"app": "uniswap_ui", "kind": c["kind"], "symbolIn": "TKN", "symbolOut": "ETH",
                                "amountIn": b["amountIn"], "amountOut": b["amountOut"], "amountOutMin": b["amountOutMin"],
                                "decimalsIn": 18, "decimalsOut": 18, "route": b["route"]}}
-              if c["kind"] == "swap": call["gasLimit"] = str(c["gasLimitHint"])
               calls.append(call)
           json.dump({"chainId": 31337, "from": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
                      "purpose": "Swap 1000 TKN for at least 0.0994005994005994 ETH on Uniswap",
@@ -368,7 +367,16 @@ sections:
           print(open("bundle.json").read())'
         expect_contains:
           - '"app": "uniswap_ui"'
-          - '"gasLimit": "180000"'
+          - '"kind": "swap"'
+      - title: "The estimate, and what it assumed"
+        run: "./logos/bin/logosctl --config-dir ./session call tx_sender_module prepare @bundle.json --human"
+        code_block: "logosctl call tx_sender_module prepare @bundle.json"
+        expect_contains:
+          - '"ok":true'
+          - '"gasSource":"estimated"'
+          - '"gasSource":"simulated"'
+          - '"after":1'
+          - '"feeCeilingWeiExact"'
       - title: "Watch the approver"
         run: "sh -c './logos/bin/logosctl --config-dir ./session watch evm_signer_cli --event prompt --json > watch.jsonl 2>&1 & echo $! > watch.pid'"
         code_block: "logosctl watch evm_signer_cli --event prompt      # in its own terminal"

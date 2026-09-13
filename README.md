@@ -52,9 +52,9 @@ rounded up; "<0.00001" is an amount that is not nothing. The one double in the f
 rate line, which is a display of a ratio and says so.
 
 The network fee is shown as **"at most"**: `maxFeePerGas × gasLimit` is a ceiling the user
-is not charged. The swap leg's gas limit is `uniswap_module`'s hint, generous on purpose:
-behind an approval the leg cannot be estimated until that lands, and a limit too low burns
-the fee and swaps nothing.
+is not charged. Every leg's limit is `fee_module`'s estimate, the swap behind its approval
+estimated with that allowance applied; `uniswap_module`'s `gasLimitHint` is not sent, so the
+figure the user reads is the chain's, not this app's guess.
 
 **Price impact** is the shortfall of the quoted rate against the rate a thousandth of the
 amount fetches on the same route. Uniswap's own thresholds: a warning colour from 3%, and

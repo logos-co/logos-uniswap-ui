@@ -164,8 +164,8 @@ int main()
         const QJsonObject sr = parseObject(senderRequest(built, f, QStringLiteral("uniswap_ui"), QStringLiteral("P"), 11155111));
         const QJsonArray calls = sr.value(QStringLiteral("calls")).toArray();
         expect("the sender gets both calls", "in order", calls.size() == 2 && calls.at(0).toObject().value(QStringLiteral("label")).toString().startsWith(QStringLiteral("Approve")));
-        expect("the approve leg carries no gas limit", "the sender estimates it", !calls.at(0).toObject().contains(QStringLiteral("gasLimit")));
-        same("the swap leg carries its hint", calls.at(1).toObject().value(QStringLiteral("gasLimit")).toString(), QStringLiteral("180000"));
+        expect("the approve leg carries no gas limit", "the estimator prices it", !calls.at(0).toObject().contains(QStringLiteral("gasLimit")));
+        expect("the swap leg carries none either", "the estimator simulates it behind the approval", !calls.at(1).toObject().contains(QStringLiteral("gasLimit")));
         const QJsonObject meta = calls.at(1).toObject().value(QStringLiteral("meta")).toObject();
         same("every leg is tagged as this app's", meta.value(QStringLiteral("app")).toString(), QStringLiteral("uniswap_ui"));
         same("...and carries what the swap was", meta.value(QStringLiteral("amountOutMin")).toString(), QStringLiteral("4"));

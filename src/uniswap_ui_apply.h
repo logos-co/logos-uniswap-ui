@@ -350,9 +350,9 @@ inline QString swapModuleRequest(const SwapForm &f, qint64 deadlineUnix)
     return toJson(o);
 }
 
-/// The sender's request for a built swap. The swap leg carries its gas hint: behind an
-/// approval it cannot be estimated until that lands, and the sender refuses a leg it can
-/// neither estimate nor was told. The approve leg is left to the sender's estimate.
+/// The sender's request for a built swap. No leg carries a gas limit: `fee_module` estimates
+/// the swap behind its approval with that allowance applied, and a limit this app invented
+/// would only stand in the way of a real one.
 inline QString senderRequest(const QJsonObject &built, const SwapForm &f, const QString &app,
                              const QString &purpose, int chainId)
 {
@@ -382,9 +382,6 @@ inline QString senderRequest(const QJsonObject &built, const SwapForm &f, const 
             {QStringLiteral("label"), c.value(QStringLiteral("label")).toString()},
             {QStringLiteral("meta"), meta},
         };
-        if (kind == QLatin1String("swap"))
-            call.insert(QStringLiteral("gasLimit"),
-                        QString::number(c.value(QStringLiteral("gasLimitHint")).toDouble(), 'f', 0));
         calls.append(call);
     }
     QJsonObject o{
