@@ -151,6 +151,11 @@ Item {
     readonly property bool catalogueLoading: ready && backend.catalogueLoading
     readonly property string catalogueError: catalogueForChain && catalogue.listError !== undefined
                                              ? String(catalogue.listError) : ""
+    // More pages than are on screen: the answer's own word for it, and the next page loads as
+    // the picker scrolls.
+    readonly property bool catalogueHasMore: catalogueForChain && catalogue.hasMore === true
+    readonly property int catalogueShown: catalogueForChain && typeof catalogue.shown === "number" ? catalogue.shown : -1
+    readonly property int catalogueTotal: catalogueForChain && typeof catalogue.total === "number" ? catalogue.total : -1
 
     readonly property string netName: net.name !== undefined ? net.name : ""
     readonly property bool netKnown: netName.length > 0
@@ -263,6 +268,27 @@ Item {
         for (var i = 0; i < tokens.length; ++i)
             if (tokenKey(tokens[i]) === tokenKey(t)) return true
         return false
+    }
+    // The picker's rows, appended a page at a time. A ListView handed a NEW array scrolls
+    // back to its top, and a page lands while the user is at the bottom — so the model behind
+    // the picker only grows in place, and starts over for a new answer.
+    ListModel { id: pickerModel }
+    onPickerTokensChanged: syncPickerModel()
+    function syncPickerModel() {
+        var rows = root.pickerTokens
+        var grows = root.catalogue.appended === true && pickerModel.count > 0
+                    && pickerModel.count <= rows.length
+        if (!grows) pickerModel.clear()
+        for (var i = pickerModel.count; i < rows.length; ++i)
+            pickerModel.append(root.pickerRow(rows[i]))
+    }
+    // One row with every role present: a ListModel types a role on first sight, and the
+    // native row has no address. The token itself is looked up again by key when picked.
+    function pickerRow(t) {
+        return { key: root.tokenKey(t), symbol: String(t.symbol || ""), name: String(t.name || ""),
+                 address: typeof t.address === "string" ? t.address : "",
+                 native: t.native === true, builtin: t.builtin === true,
+                 source: typeof t.source === "string" ? t.source : "" }
     }
     // The picker's rows: the wallet's tokens first (they have balances), the catalogue after,
     // each contract once.
@@ -1420,6 +1446,8 @@ Item {
                 font.pixelSize: Theme.typography.secondaryText
                 text: root.catalogueError.length ? "The token list could not be read: " + root.catalogueError
                     : root.catalogueLoading ? "Searching…"
+                    : root.catalogueHasMore ? "Showing " + root.catalogueShown + " of " + root.catalogueTotal
+                                              + " matches — scroll for more, or keep typing to narrow."
                     : "Tokens the wallet shows come first, with their balances; the rest are from the "
                       + "token lists the wallet trusts. A token's name proves nothing about it."
             }
@@ -1428,19 +1456,33 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 320
                 clip: true
-                model: root.pickerTokens
+                model: pickerModel
+                // The next page, asked for once per answer as its end comes into view; the
+                // backend ignores the ask while a call is live or once the answer is complete.
+                property int askedAt: -1
+                onContentYChanged: {
+                    if (!root.catalogueHasMore || root.catalogueLoading) return
+                    if (contentHeight - contentY - height > 240) return
+                    if (askedAt === root.catalogueShown) return
+                    askedAt = root.catalogueShown
+                    if (root.ready) root.backend.loadMoreCatalogue()
+                }
                 delegate: LogosItemDelegate {
                     id: pickRow
-                    objectName: "tokenPick_" + root.tokenKey(modelData)
+                    // The ListModel row, read by role: a ListModel delegate has no pickRow.row
+                    // on Qt 6.9. The token handed to the form is the original object, found
+                    // by key, not this row.
+                    readonly property var row: model
+                    objectName: "tokenPick_" + row.key
                     width: ListView.view.width
                     implicitHeight: 52
                     onClicked: {
-                        swapPage.selectToken(swapPage.picking, modelData)
+                        swapPage.selectToken(swapPage.picking, root.tokenByKey(row.key))
                         tokenPicker.close()
                     }
                     contentItem: RowLayout {
                         spacing: Theme.spacing.small
-                        TokenGlyph { symbol: modelData.symbol || "" }
+                        TokenGlyph { symbol: pickRow.row.symbol || "" }
                         ColumnLayout {
                             spacing: 0
                             Layout.fillWidth: true
@@ -1448,19 +1490,19 @@ Item {
                                 spacing: Theme.spacing.tiny
                                 LogosText {
                                     textFormat: Text.PlainText
-                                    text: modelData.symbol || ""
+                                    text: pickRow.row.symbol || ""
                                     font.weight: Theme.typography.weightMedium
                                 }
                                 LogosText {
                                     textFormat: Text.PlainText
-                                    text: root.tokenSourceLabel(root.tokenSource(modelData))
-                                    color: root.tokenSourceColor(root.tokenSource(modelData))
+                                    text: root.tokenSourceLabel(root.tokenSource(pickRow.row))
+                                    color: root.tokenSourceColor(root.tokenSource(pickRow.row))
                                     font.pixelSize: Theme.typography.secondaryText
                                 }
                             }
                             LogosText {
                                 textFormat: Text.PlainText
-                                text: (modelData.name || "") + (modelData.native === true ? "" : "  " + root.shortAddr(modelData.address))
+                                text: (pickRow.row.name || "") + (pickRow.row.native === true ? "" : "  " + root.shortAddr(pickRow.row.address))
                                 color: Theme.palette.textSecondary
                                 font.pixelSize: Theme.typography.secondaryText
                                 elide: Text.ElideRight
@@ -1469,8 +1511,8 @@ Item {
                         }
                         LogosText {
                             textFormat: Text.PlainText
-                            visible: root.isEnabledToken(modelData)
-                            text: root.balanceDisplay(modelData)
+                            visible: root.isEnabledToken(pickRow.row)
+                            text: root.balanceDisplay(pickRow.row)
                             color: Theme.palette.textSecondary
                         }
                     }

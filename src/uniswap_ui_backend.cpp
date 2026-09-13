@@ -21,7 +21,8 @@ constexpr int kVerifiedPollMs = 5000;
 constexpr int kMaxSilentPolls = 3;
 // One mainnet block. A quote re-priced faster than the chain moves learns nothing new.
 constexpr int kQuotePollMs = 12000;
-constexpr int kCatalogueLimit = 200;
+// Rows per page of the catalogue. The rest follows as the picker scrolls; nothing is cut.
+constexpr int kCataloguePage = 100;
 
 QString failure(const QString &why)
 {
@@ -429,6 +430,20 @@ void UniswapUiBackend::searchTokens(QString query)
 {
     m_catalogueQuery = query;
     m_catalogueChain = shown().chainId;
+    m_catalogueOffset = 0;
+    runCatalogueSearch();
+}
+
+void UniswapUiBackend::loadMoreCatalogue()
+{
+    // The next page of the answer on screen. Nothing while a call is live — the picker asks
+    // again as it scrolls — and nothing once the answer said it was complete.
+    if (m_catalogueLane.busy())
+        return;
+    const QJsonObject cur = parseObject(catalogueJson());
+    if (!cur.value(QStringLiteral("hasMore")).toBool())
+        return;
+    m_catalogueOffset = cur.value(QStringLiteral("tokens")).toArray().size();
     runCatalogueSearch();
 }
 
@@ -438,17 +453,24 @@ void UniswapUiBackend::runCatalogueSearch()
     if (!beginLane(m_catalogueLane, &slot))
         return;
     const quint64 gen = m_dataGen;
+    const int offset = m_catalogueOffset;
+    const QString query = m_catalogueQuery;
     // ASYNC, and the query goes to the wallet backend: the embedded Uniswap list is
     // thousands of rows, so matching it here would mean pulling all of them across the wire.
     modules().eth_wallet_backend.list_available_tokensAsyncResult(
-        m_catalogueChain, m_catalogueQuery, kCatalogueLimit,
-        [this, gen, slot](logos::AsyncResult<QString> res) {
+        m_catalogueChain, m_catalogueQuery, offset, kCataloguePage,
+        [this, gen, slot, offset, query](logos::AsyncResult<QString> res) {
             m_catalogueLane.release(slot);
             if (!m_catalogueLane.owns(slot))
                 return;
-            if (gen == m_dataGen) {
+            // A page for a question the user has since changed adds nothing: the re-run
+            // queued behind this call asks the new one from its first row.
+            const bool stalePage = offset > 0 && query != m_catalogueQuery;
+            if (gen == m_dataGen && !stalePage) {
                 ScopedState s = scopeSnapshot();
-                const Applied a = applyCatalogue(s, res.ok() ? res.value : QString());
+                const QString reply = res.ok() ? res.value : QString();
+                const Applied a = offset == 0 ? applyCatalogue(s, reply)
+                                              : applyCataloguePage(s, reply, offset);
                 publishScope(s);
                 if (!a.error.isEmpty())
                     setLastError(a.error);

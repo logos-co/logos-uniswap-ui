@@ -101,6 +101,7 @@ Item {
         function refresh() {}
         function selectAccount(a) {}
         function searchTokens(q) {}
+        function loadMoreCatalogue() {}
         function quote(r) { var l = probe.quoted; l.push(r); probe.quoted = l }
         function setQuoteAutoRefresh(on) {}
         function setSettings(j) {}

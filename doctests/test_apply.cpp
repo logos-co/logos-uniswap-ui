@@ -185,6 +185,32 @@ int main()
         expect("a balance short of the amount", "says so", nofee.value(QStringLiteral("insufficientBalance")).toBool());
     }
 
+    std::printf("\nthe catalogue, in pages: a later page grows the picker's answer, or is nothing\n");
+    {
+        ScopedState s = screen();
+        applyCatalogue(s, QStringLiteral(R"({"ok":true,"chainId":11155111,"total":5,"offset":0,"shown":2,"hasMore":true,"listed":3,"tokens":[{"symbol":"A"},{"symbol":"B"}]})"));
+        const QString second = QStringLiteral(R"({"ok":true,"chainId":11155111,"total":5,"offset":2,"shown":2,"hasMore":true,"listed":3,"tokens":[{"symbol":"C"},{"symbol":"D"}]})");
+        expect("the second page is applied", "acted", applyCataloguePage(s, second, 2).acted);
+        const QJsonObject m = parseObject(s.catalogue);
+        const QJsonArray rows = m.value(QStringLiteral("tokens")).toArray();
+        expect("...its rows follow the first page's", "A B C D",
+               rows.size() == 4 && rows.at(3).toObject().value(QStringLiteral("symbol")).toString() == QStringLiteral("D"));
+        expect("...shown counts every row held", "4", m.value(QStringLiteral("shown")).toInt() == 4);
+        expect("...and the picker is told to grow rather than start over", "appended",
+               m.value(QStringLiteral("appended")).toBool());
+        const QString before = s.catalogue;
+        expect("a page whose offset is not where the rows end", "is nothing",
+               !applyCataloguePage(s, second, 3).acted && s.catalogue == before);
+        expect("a page for another chain", "is nothing",
+               !applyCataloguePage(s, QStringLiteral(R"({"ok":true,"chainId":1,"offset":4,"total":9,"tokens":[{"symbol":"X"}]})"), 4).acted && s.catalogue == before);
+        const Applied f = applyCataloguePage(s, QStringLiteral(R"({"ok":false,"chainId":11155111,"error":"down"})"), 4);
+        expect("a page that failed", "keeps the rows and says why", f.acted && !f.error.isEmpty() && s.catalogue == before);
+        expect("the last page ends it", "hasMore false",
+               applyCataloguePage(s, QStringLiteral(R"({"ok":true,"chainId":11155111,"total":5,"offset":4,"shown":1,"hasMore":false,"listed":3,"tokens":[{"symbol":"E"}]})"), 4).acted
+               && !parseObject(s.catalogue).value(QStringLiteral("hasMore")).toBool()
+               && parseObject(s.catalogue).value(QStringLiteral("shown")).toInt() == 5);
+    }
+
     std::printf("\nthe selection: withdrawal on a move\n");
     {
         ScopedState s = screen();

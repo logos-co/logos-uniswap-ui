@@ -91,6 +91,7 @@ Item {
         function refresh() {}
         function selectAccount(a) {}
         function searchTokens(q) {}
+        function loadMoreCatalogue() {}
         function quote(r) {}
         function setQuoteAutoRefresh(on) {}
         function setSettings(j) {}

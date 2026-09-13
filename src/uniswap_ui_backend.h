@@ -32,6 +32,7 @@ public:
     void refresh() override;
     void selectAccount(QString address) override;
     void searchTokens(QString query) override;
+    void loadMoreCatalogue() override;
     void quote(QString requestJson) override;
     void setQuoteAutoRefresh(bool on) override;
     void setSettings(QString settingsJson) override;
@@ -105,6 +106,8 @@ private:
     QString m_quoteRequest;
     QString m_catalogueQuery;
     int m_catalogueChain = 0;
+    /// The first row the next call asks for: 0 for a new question, the rows held for its next page.
+    int m_catalogueOffset = 0;
     QJsonObject m_settings;
     quint64 m_dataGen = 0;
     quint64 m_quoteGen = 0;

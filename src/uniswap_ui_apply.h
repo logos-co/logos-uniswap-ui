@@ -64,6 +64,35 @@ inline Applied applyCatalogue(ScopedState &s, const QString &reply)
     return {true, ok ? QString() : refusal(reply, QStringLiteral("token list"))};
 }
 
+/// A later page of the catalogue, appended onto the one on screen. It must continue that
+/// answer — same chain, its `offset` exactly the rows already held — or nothing moves: a page
+/// for the previous query, or one that failed, is not a reason to drop what is shown. The
+/// counts follow the page, and `appended` tells the picker to grow rather than start over.
+inline Applied applyCataloguePage(ScopedState &s, const QString &reply, int offset)
+{
+    if (!answersFor(reply, s.at))
+        return {};
+    if (!replyOk(reply))
+        return {true, refusal(reply, QStringLiteral("token list"))};
+    QJsonObject acc = parseObject(s.catalogue);
+    const QJsonObject page = parseObject(reply);
+    QJsonArray rows = acc.value(QStringLiteral("tokens")).toArray();
+    if (!acc.value(QStringLiteral("ok")).toBool() || offset <= 0 || offset != rows.size()
+        || page.value(QStringLiteral("offset")).toInt(-1) != offset
+        || page.value(QStringLiteral("chainId")) != acc.value(QStringLiteral("chainId")))
+        return {};
+    for (const QJsonValue &v : page.value(QStringLiteral("tokens")).toArray())
+        rows.append(v);
+    acc.insert(QStringLiteral("tokens"), rows);
+    acc.insert(QStringLiteral("shown"), rows.size());
+    acc.insert(QStringLiteral("total"), page.value(QStringLiteral("total")));
+    acc.insert(QStringLiteral("listed"), page.value(QStringLiteral("listed")));
+    acc.insert(QStringLiteral("hasMore"), page.value(QStringLiteral("hasMore")).toBool());
+    acc.insert(QStringLiteral("appended"), true);
+    s.catalogue = toJson(acc);
+    return {true, QString()};
+}
+
 inline void applyFeeTiers(ScopedState &s, const QString &reply)
 {
     s.feeTiers = (replyOk(reply) && answersFor(reply, s.at)) ? reply : QStringLiteral("{}");
