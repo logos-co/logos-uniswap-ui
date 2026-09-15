@@ -4,8 +4,10 @@ Swap any two EVM assets on Uniswap. The app composes reusable chain, asset, acco
 swap, and sender modules directly; `eth_wallet_backend` is deliberately not a dependency.
 
 Information design follows the wallet, which follows MetaMask: one question per screen, and
-**the active network visible at all times** — a user must never be able to mistake which
-chain they are swapping on. Three sections. **Swap**: what you sell, what you buy, and under
+**the active network visible at all times** — the selector follows the backend's initial
+choice and defaults to the first enabled mainnet when no prior choice exists, so a user must
+never be able to mistake which chain they are swapping on. Three sections. **Swap**: what you
+sell, what you buy, and under
 the two cards the rate, the minimum you receive, the price impact, the route, the pool fee
 and the network fee. **Activity**: the swaps this app made, one row per swap however many
 transactions it took. **Settings**: slippage and deadline, and the two hand-offs to the apps

@@ -84,6 +84,9 @@ check("the keystore client is read-only and subscribes only to account changes",
       sorted({"list_accounts", "get_labels", "get_account_wallets", "onAccounts_changed"}))
 check("the chain selector is part of the contract and view",
       "selectNetwork(int chainId)" in REP and 'objectName: "chainPicker"' in QML)
+check("the chain selector follows both halves of backend initialization",
+      "onModelChanged: syncIndex()" in QML
+      and "function onNetChanged() { chainPicker.syncIndex() }" in QML)
 
 print("0e. the swap is offered only when the quote says it can be paid for")
 check("the button is enabled on the ready state alone",

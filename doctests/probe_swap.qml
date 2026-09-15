@@ -100,6 +100,7 @@ Item {
         property bool sweepingReceipts: false
         function refresh() {}
         function selectAccount(a) {}
+        function selectNetwork(chainId) {}
         function searchTokens(q) {}
         function loadMoreCatalogue() {}
         function quote(r) { var l = probe.quoted; l.push(r); probe.quoted = l }
@@ -151,6 +152,23 @@ Item {
         interval: 300
         onTriggered: {
             var v = view.item
+            console.log("the network picker follows the backend's two-step publication")
+            var picker = probe.node("chainPicker")
+            fake.networksJson = JSON.stringify([
+                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false }
+            ])
+            check("the choices alone cannot select a different active chain", picker.currentIndex, -1)
+            fake.activeNetworkJson = JSON.stringify(
+                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false })
+            check("publishing the chosen chain selects its row", picker.currentIndex, 0)
+            fake.networksJson = JSON.stringify([
+                { chainId: 11155111, name: "Sepolia", nativeSymbol: "ETH", testnet: true }
+            ])
+            fake.activeNetworkJson = JSON.stringify(
+                { chainId: 11155111, name: "Sepolia", nativeSymbol: "ETH", testnet: true })
+            check("and a later chain publication stays synchronized", picker.currentIndex, 0)
+
+            console.log("")
             console.log("the button says what is missing, in Uniswap's own order")
             var page = probe.find(v, "swapPage")
             check("the network coin is seeded as the sell side", page.sellSymbol, "ETH")

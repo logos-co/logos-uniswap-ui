@@ -6,15 +6,18 @@
     # Every dependency builds against THIS module-builder. Without the follows each drags
     # its own, and a skewed generated ABI segfaults the module inside provider init.
     eth_rpc_module = {
-      url = "github:logos-co/logos-evm-eth-rpc-module";
+      # The chain-registry API used by this composer is published here until its PR lands.
+      url = "github:logos-co/logos-evm-eth-rpc-module?ref=feat/chain-registry";
       inputs.logos-module-builder.follows = "logos-module-builder";
     };
     token_list_module = {
-      url = "github:logos-co/logos-evm-token-list-module";
+      # Assets consumes the offered-token set from this published feature branch.
+      url = "github:logos-co/logos-evm-token-list-module?ref=feat/offered-set";
       inputs.logos-module-builder.follows = "logos-module-builder";
     };
     keystore_module = {
-      url = "github:logos-co/logos-evm-keystore-module";
+      # Account wallet provenance is required by the direct keystore composition.
+      url = "github:logos-co/logos-evm-keystore-module?ref=codex/account-wallet-provenance";
       inputs.logos-module-builder.follows = "logos-module-builder";
     };
     fee_module = {
@@ -35,7 +38,9 @@
       inputs.keystore_module.follows = "keystore_module";
     };
     evm_assets_module = {
-      url = "github:logos-co/logos-evm-assets-module";
+      # The reusable assets repository is still landing through its first PR. Keep this
+      # composer on that published branch until the PR merges; main has no buildable module.
+      url = "github:logos-co/logos-evm-assets-module?ref=feat/assets";
       inputs.logos-module-builder.follows = "logos-module-builder";
       inputs.eth_rpc_module.follows = "eth_rpc_module";
       inputs.token_list_module.follows = "token_list_module";

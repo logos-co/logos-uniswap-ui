@@ -682,6 +682,14 @@ Item {
                 function syncIndex() { currentIndex = root.networkIndex() }
                 Component.onCompleted: syncIndex()
                 onModelChanged: syncIndex()
+                // loadNetwork publishes the choices before it publishes the chosen row. The
+                // first publication therefore cannot find the choice yet; follow the second
+                // one as well or the control keeps currentIndex=-1 while the rest of the view
+                // is already reading Ethereum.
+                Connections {
+                    target: root
+                    function onNetChanged() { chainPicker.syncIndex() }
+                }
             }
             LogosBadge {
                 objectName: "verifiedChip"
