@@ -16,8 +16,8 @@
 // Every module call is made here over the generated typed clients; the QML half renders and
 // makes no module calls of its own. Nothing on this class takes or returns key material: it
 // asks uniswap_module for a quote and the calls that make it, asks tx_sender_module to send
-// them, and reads accounts, tokens and balances from the wallet backend. That is the whole
-// of its reach. It never broadcasts: the sender does, once the keystore has a human's yes.
+// them, and composes chain, asset, account, and fee reads directly. It never broadcasts: the
+// sender does, once the keystore has a human's yes.
 //
 // It holds no rule about what may reach the screen. Every scoped value is produced by a pure
 // transition in uniswap_ui_apply.h and published through publishScope() below, so the guard
@@ -31,6 +31,7 @@ public:
 
     void refresh() override;
     void selectAccount(QString address) override;
+    void selectNetwork(int chainId) override;
     void searchTokens(QString query) override;
     void loadMoreCatalogue() override;
     void quote(QString requestJson) override;

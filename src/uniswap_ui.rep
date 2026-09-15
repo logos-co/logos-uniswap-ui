@@ -28,11 +28,11 @@ class UniswapUi
     // so a poll can take a few seconds; two must not overlap.
     PROP(bool swapPolling=false READONLY)
 
-    // { chainId, key, name, nativeSymbol, testnet, … } — the wallet backend's active network.
-    // This app never moves it; the wallet's Networks screen does, and this view follows.
+    // { chainId, name, nativeSymbol, testnet, … } — this app's UI-local current chain.
+    // It is chosen from eth_rpc_module's enabled, in-scope records.
     PROP(QString activeNetworkJson="{}" READONLY)
     PROP(QString networksJson="[]" READONLY)
-    // eth_rpc's verdict for the active chain, via the wallet backend:
+    // eth_rpc's verdict for this app's current chain:
     // { ok, chainId, mode, state, usable, blocking, message, action, detail }.
     PROP(QString verifiedProxyJson="{}" READONLY)
 
@@ -41,11 +41,11 @@ class UniswapUi
     PROP(QString accountLabelsJson="{}" READONLY)
     PROP(QString accountWalletsJson="{}" READONLY)
 
-    // The tokens the wallet shows on the active chain: `[{ symbol, name, decimals, address?,
+    // The tokens this app shows on its UI-local selected chain: `[{ symbol, name, decimals, address?,
     // native?, source? }]`. EMPTY means "not read yet"; the previous network's symbols are
     // not an answer about this one.
     PROP(QString tokensJson="" READONLY)
-    // Balances for the selected account on the active network, one row per enabled token.
+    // Balances for the selected account on the UI-local selected network, one row per asset.
     // EMPTY means "not read yet", which the view renders as an em-dash — never as a zero.
     PROP(QString balancesJson="" READONLY)
     PROP(QString balancesRoute="" READONLY)
@@ -92,8 +92,9 @@ class UniswapUi
 
     SLOT(void refresh())
     SLOT(void selectAccount(QString address))
-    // Search the catalogue offered on the active chain. The query goes to the wallet
-    // backend: the embedded Uniswap list is thousands of rows.
+    SLOT(void selectNetwork(int chainId))
+    // Search the catalogue offered on this app's current chain. The query goes to the
+    // assets module: the embedded Uniswap list is thousands of rows.
     SLOT(void searchTokens(QString query))
     // The next page of the current answer, asked for as the picker scrolls to its end.
     // Ignored while a call is live or once the answer said it was complete.

@@ -218,24 +218,18 @@ void UniswapUiBackend::onContextReady()
         runQuote(m_quoteRequest, false);
     });
 
-    // The wallet backend: the account, the chain, the tokens and their balances all move
-    // without this app asking. Every event re-enters on a clean stack.
-    modules().eth_wallet_backend.onBalances_updated([this](QString address) {
-        if (address.isEmpty() || address.compare(selectedAccount(), Qt::CaseInsensitive) == 0)
-            refreshSoon();
-    });
-    modules().eth_wallet_backend.onActive_chain_changed([this](int chainId) {
-        adoptChain(chainId);
-        refreshSoon();
-    });
-    modules().eth_wallet_backend.onAccounts_changed([this](int) { refreshSoon(); });
-    modules().eth_wallet_backend.onTokens_changed([this](int chainId) {
+    // Each reusable provider announces the slice this app reads. Event callbacks re-enter on
+    // a clean stack; none performs another module call inline.
+    modules().eth_rpc_module.onChain_config_changed([this](int) { refreshSoon(); });
+    modules().eth_rpc_module.onChain_enabled_changed([this](int, bool) { refreshSoon(); });
+    modules().eth_rpc_module.onNetwork_scope_changed([this](QString) { refreshSoon(); });
+    modules().keystore_module.onAccounts_changed([this](int) { refreshSoon(); });
+    modules().evm_assets_module.onOffered_changed([this](int chainId) {
         if (chainId != shown().chainId)
             return;
         refreshSoon();
         runCatalogueSearch();
     });
-    modules().eth_wallet_backend.onNetworks_changed([this](int) { refreshSoon(); });
 
     // The sender: the swap in flight moved, a receipt landed, or a row was written — the
     // wallet's rows included, so the re-read is checked against the selection on screen.
@@ -256,18 +250,9 @@ void UniswapUiBackend::onContextReady()
 
 void UniswapUiBackend::loadNetwork()
 {
-    quint64 gen = m_dataGen;
-    const QString active = modules().eth_wallet_backend.get_active_network();
-    switch (networkStep(selectionHeld(gen), active)) {
-    case NetworkStep::AskAgain:
-        m_refreshAgain = true;
-        break;
-    case NetworkStep::Publish:
-        setActiveNetworkJson(member(active, "network"));
-        applyVerifiedProxy(member(activeNetworkJson(), "verifiedProxy"));
-        break;
-    case NetworkStep::Unknown:
-        setLastError(refusal(active, QStringLiteral("network")));
+    const QString all = modules().eth_rpc_module.list_chain_configs();
+    if (failed(all, QStringLiteral("networks"))) {
+        setNetworksJson(QStringLiteral("[]"));
         setActiveNetworkJson(QStringLiteral("{}"));
         if (!m_networkRetry) {
             m_networkRetry = true;
@@ -278,19 +263,21 @@ void UniswapUiBackend::loadNetwork()
         }
         if (!m_vpPoll.isActive())
             m_vpPoll.start();
-        break;
+        return;
     }
 
-    gen = m_dataGen;
-    const QString all = modules().eth_wallet_backend.list_networks();
-    if (!failed(all, QStringLiteral("networks"))) {
-        setNetworksJson(member(all, "networks"));
-        const int now = parseObject(all).value(QStringLiteral("activeChainId")).toInt();
-        if (mayAdopt(selectionHeld(gen), now) && adoptChain(now))
-            m_refreshAgain = true;
+    const QJsonArray choices = inScopeNetworks(parseObject(all).value(QStringLiteral("chains")).toArray());
+    setNetworksJson(toJson(choices));
+    const int chosen = chooseChain(choices, shown().chainId);
+    if (chosen == 0) {
+        setActiveNetworkJson(QStringLiteral("{}"));
+    } else if (adoptChain(chosen)) {
+        m_refreshAgain = true;
     }
 
-    const QString tokens = modules().eth_wallet_backend.list_tokens();
+    if (shown().chainId == 0)
+        return;
+    const QString tokens = modules().evm_assets_module.list_offered(shown().chainId);
     ScopedState s = scopeSnapshot();
     const Applied t = applyTokens(s, tokens);
     publishScope(s);
@@ -300,9 +287,9 @@ void UniswapUiBackend::loadNetwork()
 
 void UniswapUiBackend::loadAccounts()
 {
-    const QString reply = modules().eth_wallet_backend.list_accounts();
-    const QString labels = modules().eth_wallet_backend.get_account_labels();
-    const QString wallets = modules().eth_wallet_backend.get_account_wallets();
+    const QString reply = modules().keystore_module.list_accounts();
+    const QString labels = modules().keystore_module.get_labels();
+    const QString wallets = modules().keystore_module.get_account_wallets();
     if (failed(reply, QStringLiteral("accounts")))
         return;
     setAccountsJson(member(reply, "accounts"));
@@ -336,7 +323,7 @@ void UniswapUiBackend::loadBalancesAndSwaps()
     const quint64 gen = m_dataGen;
     const QString who = selectedAccount();
     const int chainId = shown().chainId;
-    modules().eth_wallet_backend.get_balancesAsyncResult(who,
+    modules().evm_assets_module.get_balancesAsyncResult(chainId, who, QStringLiteral("alpha"),
         [this, gen, who, chainId, slot](logos::AsyncResult<QString> bal) {
             if (!m_dataLane.owns(slot))
                 return;
@@ -381,7 +368,7 @@ void UniswapUiBackend::loadFeeTiers()
     if (!beginClaim(m_feesInFlight, &slot, [this](bool on) { setFeeTiersLoading(on); }))
         return;
     const quint64 gen = m_dataGen;
-    modules().eth_wallet_backend.suggest_feesAsyncResult(
+    modules().fee_module.suggest_feesAsyncResult(shown().chainId,
         [this, gen, slot](logos::AsyncResult<QString> res) {
             m_feesInFlight.release(slot);
             if (!m_feesInFlight.isCurrent(slot) || gen != m_dataGen)
@@ -421,6 +408,13 @@ void UniswapUiBackend::selectAccount(QString address)
     loadBalancesAndSwaps();
 }
 
+void UniswapUiBackend::selectNetwork(int chainId)
+{
+    if (!adoptChain(chainId))
+        return;
+    refresh();
+}
+
 void UniswapUiBackend::refreshSwaps()
 {
     loadBalancesAndSwaps();
@@ -455,9 +449,9 @@ void UniswapUiBackend::runCatalogueSearch()
     const quint64 gen = m_dataGen;
     const int offset = m_catalogueOffset;
     const QString query = m_catalogueQuery;
-    // ASYNC, and the query goes to the wallet backend: the embedded Uniswap list is
+    // ASYNC, and the query goes to the assets module: the embedded Uniswap list is
     // thousands of rows, so matching it here would mean pulling all of them across the wire.
-    modules().eth_wallet_backend.list_available_tokensAsyncResult(
+    modules().evm_assets_module.list_availableAsyncResult(
         m_catalogueChain, m_catalogueQuery, offset, kCataloguePage,
         [this, gen, slot, offset, query](logos::AsyncResult<QString> res) {
             m_catalogueLane.release(slot);
@@ -751,7 +745,12 @@ void UniswapUiBackend::refreshVerifiedProxy()
     quint64 slot = 0;
     if (!m_vpInFlight.take(kOneCallBudgetMs, &slot))
         return;
-    modules().eth_wallet_backend.verified_proxy_stateAsyncResult(
+    if (shown().chainId == 0) {
+        m_vpInFlight.release(slot);
+        applyVerifiedProxy(QString());
+        return;
+    }
+    modules().eth_rpc_module.verified_proxy_statusAsyncResult(shown().chainId,
         [this, slot](logos::AsyncResult<QString> verdict) {
             m_vpInFlight.release(slot);
             applyVerifiedProxy(verdict.ok() ? verdict.value : QString());

@@ -49,8 +49,8 @@ inline QString member(const QString &reply, const char *key)
     return {};
 }
 
-/// The account and network every scoped value on screen was read under. chainId 0 means the
-/// active network could not be read.
+/// The account and UI-local network cursor every scoped value on screen was read under.
+/// chainId 0 means no configured in-scope chain could be selected.
 struct Selection {
     QString account;
     int chainId = 0;

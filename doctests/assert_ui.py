@@ -8,6 +8,7 @@ backend-authored string rendered as markup, no scoped setter outside publishScop
 """
 import re
 import sys
+import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -16,6 +17,7 @@ REP = (SRC / "uniswap_ui.rep").read_text()
 QML = (SRC / "qml" / "UniswapView.qml").read_text()
 CPP = (SRC / "uniswap_ui_backend.cpp").read_text()
 HDR = (SRC / "uniswap_ui_backend.h").read_text()
+META = json.loads((HERE.parent / "metadata.json").read_text())
 
 failures = 0
 
@@ -71,10 +73,19 @@ check("...and there are calls to bound", len(async_calls) >= 10)
 sync_calls = re.findall(r"modules\(\)\.[a-z_]+\.([a-z_]+)\(", CPP)
 check("the synchronous calls are the cheap reads and the cancel alone",
       sorted(set(sync_calls) - {"on" + n for n in []}),
-      sorted({"get_active_network", "list_networks", "list_tokens", "list_accounts", "get_account_labels",
+      sorted({"list_chain_configs", "list_offered", "list_accounts", "get_labels",
               "get_account_wallets", "cancel_send"}))
 
-print("0d. the swap is offered only when the quote says it can be paid for")
+print("0d. this dapp composes reusable modules, never the wallet backend")
+check("the wallet backend is not a dependency", "eth_wallet_backend" not in META["dependencies"])
+check("...or a client used by the backend", "eth_wallet_backend" not in CPP)
+keystore_calls = sorted(set(re.findall(r"keystore_module\.([A-Za-z_]+)\(", CPP)))
+check("the keystore client is read-only and subscribes only to account changes", keystore_calls,
+      sorted({"list_accounts", "get_labels", "get_account_wallets", "onAccounts_changed"}))
+check("the chain selector is part of the contract and view",
+      "selectNetwork(int chainId)" in REP and 'objectName: "chainPicker"' in QML)
+
+print("0e. the swap is offered only when the quote says it can be paid for")
 check("the button is enabled on the ready state alone",
       re.search(r'objectName: "swapButton".*?enabled: root\.ready && !root\.swapSubmitting\s*&& swapForm\.state === "ready"', QML, re.S) is not None)
 check("the review confirm is what submits", "root.backend.submitSwap(swapForm.formRequest)" in QML)
