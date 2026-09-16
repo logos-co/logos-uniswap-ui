@@ -89,11 +89,25 @@ sections:
   - title: "The three sections, over real modules"
     step: true
     text: |
+      The standalone host has no Ethereum RPC settings UI to seed the shared registry, so
+      this hermetic session starts with one enabled mainnet row. That is the same persisted
+      state the settings app supplies in Basecamp and lets this test prove that Uniswap reads
+      the registry instead of inventing its own network list.
+
       `QT_FORCE_STDERR_LOGGING=1` keeps the host's diagnostics out of journald, and
       `QML_INSPECTOR_PORT=3768` is what the driver attaches to. Tabs are driven
       through `selectTab()`; `pages.currentIndex` is read back so a `selectTab`
       that silently did nothing is not mistaken for a section that rendered.
     steps:
+      - title: "Seed the shared network registry"
+        run: |
+          rm -rf userdir
+          mkdir -p userdir/module_data/eth_rpc_module/000000000000
+          cp doctests/fixtures/eth-rpc/chains.json userdir/module_data/eth_rpc_module/000000000000/chains.json
+          cp doctests/fixtures/eth-rpc/registry.json userdir/module_data/eth_rpc_module/000000000000/registry.json
+        code_block: |
+          mkdir -p userdir/module_data/eth_rpc_module/000000000000
+          cp doctests/fixtures/eth-rpc/*.json userdir/module_data/eth_rpc_module/000000000000/
       - title: "It comes up, and the modules are behind it"
         ui_test:
           launch: "env QT_FORCE_STDERR_LOGGING=1 QML_INSPECTOR_PORT=3768 ./result-app/bin/logos-standalone-app -p ./tree/plugins/uniswap_ui -m ./tree/modules -u ./userdir"
