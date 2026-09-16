@@ -109,6 +109,10 @@ sections:
               find_value: "uniswapRoot"
               property: "objectName"
               value: "uniswapRoot"
+            - name: "The chain registry has reached the view"
+              action: wait_for
+              texts: ["Ethereum"]
+              timeout: 20000
             - name: "The network selector defaults to Ethereum, which only a wired chain registry can do"
               action: expect_property
               find_value: "chainPicker"
