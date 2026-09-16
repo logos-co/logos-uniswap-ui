@@ -1,11 +1,13 @@
 # uniswap_ui
 
-Swap any two tokens on Uniswap from the wallet's accounts, on whichever network the wallet
-is on.
+Swap any two EVM assets on Uniswap. The app composes reusable chain, asset, account, fee,
+swap, and sender modules directly; `eth_wallet_backend` is deliberately not a dependency.
 
 Information design follows the wallet, which follows MetaMask: one question per screen, and
-**the active network visible at all times** — a user must never be able to mistake which
-chain they are swapping on. Three sections. **Swap**: what you sell, what you buy, and under
+**the active network visible at all times** — the selector follows the backend's initial
+choice and defaults to the first enabled mainnet when no prior choice exists, so a user must
+never be able to mistake which chain they are swapping on. Three sections. **Swap**: what you
+sell, what you buy, and under
 the two cards the rate, the minimum you receive, the price impact, the route, the pool fee
 and the network fee. **Activity**: the swaps this app made, one row per swap however many
 transactions it took. **Settings**: slippage and deadline, and the two hand-offs to the apps
@@ -18,7 +20,15 @@ that make it, and asks `tx_sender_module` to send them; the human's yes is taken
 `evm_signer_ui`, once, for every call of the swap. There is no password parameter anywhere
 in `src/uniswap_ui.rep`, and there never may be; `doctests/assert_ui.py` asserts the absence.
 
-It never moves the network. The wallet's Networks screen does, and this view follows.
+Its chain dropdown is UI-local. Choices come from the enabled chains in
+`eth_rpc_module`'s device-wide scope; when the old choice leaves that set, the app chooses
+the first in-scope mainnet (or the first remaining chain).
+
+The keystore dependency is read-only here: this app calls only `list_accounts`, `get_labels`,
+and `get_account_wallets`, and listens for `accounts_changed`. A dependency token technically
+grants the whole client surface, but the keystore's role gate still refuses signing and
+mutation to this non-approver, non-custodian module. Every transaction leaves through
+`tx_sender_module`, which owns the approval flow.
 
 ## Why a swap is one approval and, often, two transactions
 
@@ -82,7 +92,7 @@ and every shape this view hands its two modules. `doctests/probe_swap.qml` and
 assert what it **says**: every state of the swap button, the quote rows, the review, the
 signer hand-off and each of its answers.
 
-`doctests/uniswap-ui-e2e.test.yaml` builds the plugin and the seven modules under it, stands
+`doctests/uniswap-ui-e2e.test.yaml` builds the plugin and the reusable modules under it, stands
 a real `logos-standalone-app` up, and drives the three sections over the QML inspector —
 hermetic, with an empty keystore. `doctests/uniswap-anvil-swap.test.yaml` runs the three
 modules the way the view runs them, with `logosctl` alone, against a local Anvil chain
@@ -96,10 +106,15 @@ nix build .#lgx-portable   # the installable package (Basecamp / logosctl)
 nix build .#install        # the dev variant, for logos-standalone-app
 ```
 
-Until `logos-evm-tx-sender-module` is published, point the input at a checkout:
+For a complete local composition, point every changing input at its checkout:
 
 ```bash
-nix build .#install --override-input tx_sender_module path:../logos-evm-tx-sender-module \
-  --override-input eth_wallet_backend path:../logos-eth-wallet-backend \
-  --override-input uniswap_module path:../uniswap-module --no-write-lock-file
+nix build .#install --no-write-lock-file \
+  --override-input eth_rpc_module path:../eth-rpc-module \
+  --override-input token_list_module path:../logos-evm-token-list-module \
+  --override-input keystore_module path:../keystore-module \
+  --override-input fee_module path:../logos-evm-fee-module \
+  --override-input uniswap_module path:../uniswap-module \
+  --override-input tx_sender_module path:../logos-evm-tx-sender-module \
+  --override-input evm_assets_module path:../logos-evm-assets-module
 ```

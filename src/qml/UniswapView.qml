@@ -6,8 +6,8 @@ import Logos.Icons
 import Logos.Theme
 
 // The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
-// everything else under the two cards, and the active network visible at all times. This
-// view never moves the network; the wallet's Networks screen does, and this view follows.
+// everything else under the two cards, and this app's network visible at all times. The
+// network is chosen here from eth_rpc_module's enabled, in-scope chains.
 //
 // It holds no secret and sends nothing: uniswap_module quotes and builds, tx_sender_module
 // sends, evm_signer_ui takes the human's yes — once, for every call of the swap. Every
@@ -113,6 +113,7 @@ Item {
     }
 
     readonly property var net: ready ? j(backend.activeNetworkJson, "{}") : ({})
+    readonly property var networks: ready ? j(backend.networksJson, "[]") : []
     readonly property var accounts: ready ? j(backend.accountsJson, "[]") : []
     readonly property var accountLabels: ready ? j(backend.accountLabelsJson, "{}") : ({})
     readonly property var accountWallets: ready ? j(backend.accountWalletsJson, "{}") : ({})
@@ -162,6 +163,15 @@ Item {
     readonly property string nativeSymbol: net.nativeSymbol !== undefined ? net.nativeSymbol : ""
     readonly property bool isTestnet: net.testnet === true
     function networkLabel() { return netKnown ? netName + (isTestnet ? " (testnet)" : "") : "—" }
+    function networkIndex() {
+        for (var i = 0; i < networks.length; ++i)
+            if (networks[i].chainId === net.chainId) return i
+        return -1
+    }
+    function networkChoiceLabel(n) {
+        var name = n.name !== undefined && String(n.name).length ? String(n.name) : "Chain " + n.chainId
+        return name + (n.testnet === true ? " · TESTNET" : "")
+    }
     readonly property bool swapPending: ready && backend.pendingRequestId.length > 0
     readonly property string selected: ready ? backend.selectedAccount : ""
 
@@ -661,14 +671,25 @@ Item {
                 onCopied: function (v) { root.lastCopiedValue = v }
             }
             Item { Layout.fillWidth: true }
-            LogosBadge {
-                objectName: "chainChip"
-                text: !root.netKnown ? "—"
-                    : root.isTestnet ? root.netName.toUpperCase() + " · TESTNET"
-                                     : root.netName.toUpperCase()
-                color: !root.netKnown ? Theme.palette.textSecondary
-                     : root.isTestnet ? Theme.palette.accentOrange
-                                      : Theme.palette.success
+            LogosComboBox {
+                id: chainPicker
+                objectName: "chainPicker"
+                Layout.preferredWidth: 190
+                model: root.networks.map(function (n) { return root.networkChoiceLabel(n) })
+                enabled: root.ready && root.networks.length > 0
+                onActivated: if (root.ready && currentIndex >= 0)
+                    root.backend.selectNetwork(root.networks[currentIndex].chainId)
+                function syncIndex() { currentIndex = root.networkIndex() }
+                Component.onCompleted: syncIndex()
+                onModelChanged: syncIndex()
+                // loadNetwork publishes the choices before it publishes the chosen row. The
+                // first publication therefore cannot find the choice yet; follow the second
+                // one as well or the control keeps currentIndex=-1 while the rest of the view
+                // is already reading Ethereum.
+                Connections {
+                    target: root
+                    function onNetChanged() { chainPicker.syncIndex() }
+                }
             }
             LogosBadge {
                 objectName: "verifiedChip"
@@ -1274,8 +1295,8 @@ Item {
                                 wrapMode: Text.WordWrap
                                 color: Theme.palette.textSecondary
                                 font.pixelSize: Theme.typography.secondaryText
-                                text: "Networks are chosen in the wallet; this app swaps on whichever is active. "
-                                      + "Slippage and deadline are kept for this session."
+                                text: "This app's network is selected in the header from the enabled device scope. "
+                                      + "Slippage, deadline, and that selection are kept for this session."
                             }
                             Item { Layout.fillHeight: true }
                         }

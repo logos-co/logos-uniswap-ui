@@ -51,6 +51,24 @@ QString row(const char *hash, const char *reqId, int leg, const char *status, co
 
 int main()
 {
+    std::printf("networks: only enabled in-scope records, with a UI-local default\n");
+    {
+        const QJsonArray records = QJsonDocument::fromJson(R"([
+          {"chainId":11155111,"name":"Sepolia","enabled":true,"inScope":true,"testnet":true},
+          {"chainId":1,"name":"Ethereum","enabled":true,"inScope":true,"testnet":false},
+          {"chainId":560048,"name":"Hoodi","enabled":false,"inScope":false,"testnet":true},
+          {"chainId":10,"name":"Optimism","enabled":true,"inScope":false,"testnet":false}
+        ])").array();
+        const QJsonArray choices = inScopeNetworks(records);
+        expect("disabled and out-of-scope records", "are absent", choices.size() == 2);
+        expect("the current chain remains this app's choice", "Sepolia", chooseChain(choices, 11155111) == 11155111);
+        expect("an unavailable choice falls back to a mainnet", "Ethereum", chooseChain(choices, 99) == 1);
+        QJsonArray testnets; testnets.append(choices.first());
+        expect("a testnet is still usable when it is all the scope offers", "Sepolia",
+               chooseChain(testnets, 99) == 11155111);
+        expect("no enabled in-scope chain", "means no selection", chooseChain({}, 1) == 0);
+    }
+
     std::printf("balances: a reply naming another selection is not late, it is about something else\n");
     {
         ScopedState s = screen(); s.fresh = false; s.balances.clear();

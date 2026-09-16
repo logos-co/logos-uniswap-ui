@@ -14,7 +14,7 @@ struct Applied {
     QString error;
 };
 
-/// The verdict to publish once the wallet backend has stopped answering. Unknown is not
+/// The verdict to publish once eth_rpc_module has stopped answering. Unknown is not
 /// "off": it blocks.
 inline QString unknownVerdict(int chainId, const QString &why)
 {
@@ -260,7 +260,7 @@ inline VerdictApplied applyVerdict(ScopedState &s, const QString &reply, int sil
     if (!parseObject(publish).contains(QStringLiteral("mode")) || !answersFor(publish, s.at)) {
         if (++silent < maxSilent)
             return {silent, true};
-        publish = unknownVerdict(s.at.chainId, QStringLiteral("the wallet backend stopped answering"));
+        publish = unknownVerdict(s.at.chainId, QStringLiteral("the RPC module stopped answering"));
     } else {
         silent = 0;
     }
@@ -299,18 +299,35 @@ inline SendApplied applySend(ScopedState &s, const QString &reply, bool selectio
     return {false, QString(), QString(), true};
 }
 
-enum class NetworkStep { AskAgain, Publish, Unknown };
-
-inline NetworkStep networkStep(bool selectionHeld, const QString &reply)
+/// Only enabled records selected by the device-wide scope are choices for this app.
+inline QJsonArray inScopeNetworks(const QJsonArray &chains)
 {
-    if (!selectionHeld)
-        return NetworkStep::AskAgain;
-    return replyOk(reply) ? NetworkStep::Publish : NetworkStep::Unknown;
+    QJsonArray out;
+    for (const QJsonValue &value : chains) {
+        const QJsonObject row = value.toObject();
+        if (row.value(QStringLiteral("enabled")).toBool()
+            && row.value(QStringLiteral("inScope")).toBool())
+            out.append(row);
+    }
+    return out;
 }
 
-inline bool mayAdopt(bool selectionHeld, int reportedChainId)
+/// Keep the UI-local chain while it is offered. Otherwise prefer the first mainnet, then
+/// the first remaining row. eth_rpc supplies a stable mainnet-before-testnet order, but the
+/// preference is explicit here so this app remains correct for any provider ordering.
+inline int chooseChain(const QJsonArray &chains, int current)
 {
-    return selectionHeld && reportedChainId != 0;
+    for (const QJsonValue &value : chains) {
+        if (value.toObject().value(QStringLiteral("chainId")).toInt() == current)
+            return current;
+    }
+    for (const QJsonValue &value : chains) {
+        const QJsonObject row = value.toObject();
+        if (!row.value(QStringLiteral("testnet")).toBool())
+            return row.value(QStringLiteral("chainId")).toInt();
+    }
+    return chains.isEmpty() ? 0
+                            : chains.first().toObject().value(QStringLiteral("chainId")).toInt();
 }
 
 // ── the swap request, from the form to the two modules ─────────────────────────────
