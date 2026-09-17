@@ -10,7 +10,15 @@
   "main": "uniswap_ui_plugin",
   "icon": "src/icons/uniswap.png",
   "view": "qml/UniswapView.qml",
-  "dependencies": ["eth_rpc_module", "token_list_module", "keystore_module", "fee_module", "uniswap_module", "tx_sender_module", "evm_assets_module"],
+  "dependencies": [
+    { "name": "eth_rpc_module", "version": "~0.1.0" },
+    { "name": "token_list_module", "version": "~0.1.0" },
+    { "name": "keystore_module", "version": "~0.1.0" },
+    { "name": "fee_module", "version": "~0.1.0" },
+    { "name": "uniswap_module", "version": "~0.1.0" },
+    { "name": "tx_sender_module", "version": "~0.1.0" },
+    { "name": "evm_assets_module", "version": "~0.1.0" }
+  ],
   "uses": [
     { "intent": "evm.signing.approve", "cardinality": "single" },
     { "intent": "evm.accounts.manage", "cardinality": "single" },
