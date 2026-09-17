@@ -18,6 +18,9 @@ QML = (SRC / "qml" / "UniswapView.qml").read_text()
 CPP = (SRC / "uniswap_ui_backend.cpp").read_text()
 HDR = (SRC / "uniswap_ui_backend.h").read_text()
 META = json.loads((HERE.parent / "metadata.json").read_text())
+# A dependency entry is a bare name or `{ name, version }`; compare names, or an
+# object entry would never equal the string being looked for.
+DEPS = [d if isinstance(d, str) else d["name"] for d in META["dependencies"]]
 
 failures = 0
 
@@ -77,7 +80,8 @@ check("the synchronous calls are the cheap reads and the cancel alone",
               "get_account_wallets", "cancel_send"}))
 
 print("0d. this dapp composes reusable modules, never the wallet backend")
-check("the wallet backend is not a dependency", "eth_wallet_backend" not in META["dependencies"])
+check("the wallet backend is not a dependency", "eth_wallet_backend" not in DEPS)
+check("...and the check reads real names", "uniswap_module" in DEPS)
 check("...or a client used by the backend", "eth_wallet_backend" not in CPP)
 keystore_calls = sorted(set(re.findall(r"keystore_module\.([A-Za-z_]+)\(", CPP)))
 check("the keystore client is read-only and subscribes only to account changes", keystore_calls,
