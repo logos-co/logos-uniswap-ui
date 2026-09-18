@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Source assertions for uniswap_ui: the claims a file can answer for, with no app.
 
-Everything here is a grep with a reason. The rules a table can RUN live in test_apply.cpp
-and test_units.cpp; the bindings live in the probes. What is left for a grep is what neither
-can see, asserted as an ABSENCE where possible: no password anywhere on the contract, no
-backend-authored string rendered as markup, no scoped setter outside publishScope.
+Everything here is a grep with a reason. The rules a table can RUN live in test_apply.cpp;
+the bindings live in the probes. What is left for a grep is what neither can see, asserted
+as an ABSENCE where possible: no password anywhere on the contract, no backend-authored
+string rendered as markup, no scoped setter outside publishScope.
 """
 import re
 import sys

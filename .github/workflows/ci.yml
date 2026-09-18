@@ -2,7 +2,7 @@ name: CI
 
 # The offline half of this view's suite — the half that needs no app.
 #
-# What runs: the two C++ tables over the pure headers in src/, the two QML
+# What runs: the C++ table over the pure headers in src/, the two QML
 # probes that load the real view against a fabricated backend, and the source
 # assertions in assert_ui.py.
 #
@@ -119,9 +119,9 @@ jobs:
             grep -q -- "--- $p.qml" /tmp/tables.log \
               || { echo "::error::probe never ran: $p"; exit 1; }
           done
-          # Two tables and two probes each sign off with one RESULT line, and a
+          # One table and two probes each sign off with one RESULT line, and a
           # probe that reaches its last phase is the only thing that prints one.
           n=$(grep -c "RESULT: ALL PASS" /tmp/tables.log)
-          echo "sections that reported: $n"; [ "$n" -ge 4 ]
+          echo "sections that reported: $n"; [ "$n" -ge 3 ]
           n=$(grep -c "  PASS  " /tmp/tables.log)
           echo "assertions: $n"; [ "$n" -ge 120 ]

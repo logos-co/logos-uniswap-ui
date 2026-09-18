@@ -27,15 +27,12 @@ concurrency:
 
 jobs:
 
-  # The two e2e specs. The offline half of this repo's suite — two C++ tables,
-  # two QML probes and assert_ui.py's source assertions — is ci.yml's job and
-  # runs in minutes. These stand a real host up over seven real modules, and the
-  # Anvil one swaps for real on a local chain; a red square here means the
-  # shipped plugin does not come up or the swap does not go through, which is a
-  # different claim from any the offline half makes.
-  #
-  # Until logos-evm-tx-sender-module is published, every build here that reaches
-  # tx_sender_module needs an --override-input pointing at a checkout.
+  # The e2e spec. The offline half of this repo's suite — one C++ table, two QML
+  # probes and assert_ui.py's source assertions — is ci.yml's job and runs in
+  # minutes. This stands a real host up over uniswap_backend and the seven modules
+  # under it; a red square here means the shipped plugin does not come up, which
+  # is a different claim from any the offline half makes. The swap itself is
+  # proven by logos-uniswap-backend's Anvil doctest.
   doctests:
     name: uniswap-ui doc-tests (${{ matrix.os }})
     strategy:
