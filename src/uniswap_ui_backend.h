@@ -13,11 +13,10 @@
 
 // The Uniswap app's backend.
 //
-// Every module call is made here over the generated typed clients; the QML half renders and
-// makes no module calls of its own. Nothing on this class takes or returns key material: it
-// asks uniswap_module for a quote and the calls that make it, asks tx_sender_module to send
-// them, and composes chain, asset, account, and fee reads directly. It never broadcasts: the
-// sender does, once the keystore has a human's yes.
+// Every module call is made here, to uniswap_backend alone; the QML half renders and makes no
+// module calls of its own. Nothing on this class takes or returns key material: the backend
+// quotes, builds and hands the swap to the sender, and composes the chain, token, account and
+// fee reads. It never broadcasts: the sender does, once the keystore has a human's yes.
 //
 // It holds no rule about what may reach the screen. Every scoped value is produced by a pure
 // transition in uniswap_ui_apply.h and published through publishScope() below, so the guard
@@ -63,15 +62,16 @@ private:
 
     bool beginLane(AsyncLane &lane, quint64 *slot);
     void handOnLane(AsyncLane &lane);
-    bool beginClaim(InFlight &claim, quint64 *slot, const SetLoading &setLoading);
+    bool beginClaim(InFlight &claim, quint64 *slot, const SetLoading &setLoading,
+                    int budgetMs = kOneCallBudgetMs);
 
     void loadNetwork();
     void loadAccounts();
     /// Balances then this app's swaps, asynchronously: both reach eth_rpc's verified gate.
     void loadBalancesAndSwaps();
     void loadFeeTiers();
-    /// One quote: uniswap_module builds the swap, tx_sender_module prices it. Two async legs
-    /// on one lane, so a keystroke landing mid-call is priced after it, never beside it.
+    /// One quote, one call: the backend builds the swap and has the sender price it. On one
+    /// lane, so a keystroke landing mid-call is priced after it, never beside it.
     void runQuote(const QString &requestJson, bool interactive);
     void runCatalogueSearch();
     void applyVerifiedProxy(const QString &verdictJson);
@@ -96,7 +96,6 @@ private:
     AsyncLane m_dataLane;
     AsyncLane m_quoteLane;
     AsyncLane m_catalogueLane;
-    InFlight m_pendingInFlight;
     InFlight m_feesInFlight;
     /// One poll of the swap awaiting approval at a time: `send_status` IS the broadcast.
     InFlight m_pollInFlight;

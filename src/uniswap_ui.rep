@@ -29,7 +29,7 @@ class UniswapUi
     PROP(bool swapPolling=false READONLY)
 
     // { chainId, name, nativeSymbol, testnet, … } — this app's UI-local current chain.
-    // It is chosen from eth_rpc_module's enabled, in-scope records.
+    // It is chosen from the backend's networks: enabled, in-scope chains Uniswap is on.
     PROP(QString activeNetworkJson="{}" READONLY)
     PROP(QString networksJson="[]" READONLY)
     // eth_rpc's verdict for this app's current chain:
@@ -49,13 +49,13 @@ class UniswapUi
     // EMPTY means "not read yet", which the view renders as an em-dash — never as a zero.
     PROP(QString balancesJson="" READONLY)
     PROP(QString balancesRoute="" READONLY)
-    // The list_available_tokens answer: { ok, chainId, total, shown, hasMore, listed, tokens,
+    // The catalogue answer: { ok, chainId, total, shown, hasMore, listed, tokens,
     // listError?, appended? }. The first page verbatim; every later page loadMoreCatalogue
     // fetched is appended onto it, `shown` counting all rows held and `appended` marking a
     // growth rather than a new answer. Chain-scoped: it names the chain it answered for.
     PROP(QString catalogueJson="" READONLY)
 
-    // { baseFeePerGas, source, tiers: { slow, normal, fast } }, from fee_module via the wallet.
+    // { baseFeePerGas, source, tiers: { slow, normal, fast } }, from fee_module via the backend.
     PROP(QString feeTiersJson="{}" READONLY)
 
     // The last quote: uniswap_module's build_swap reply (amounts, route, price impact, the
@@ -85,7 +85,7 @@ class UniswapUi
 
     // This app's own swaps on the selected account and network, newest first, one entry per
     // bundle: `[{ requestId, status, timestamp, hashes, legs: [rows], swap: meta, label }]`.
-    // Read off tx_sender_module's history and grouped here. EMPTY means "not read yet".
+    // Read off tx_sender_module's history and grouped by uniswap_backend. EMPTY means "not read yet".
     PROP(QString swapsJson="" READONLY)
     // True while a swap of this app's is still pending and the receipt sweep is scheduled.
     PROP(bool sweepingReceipts=false READONLY)
@@ -94,7 +94,7 @@ class UniswapUi
     SLOT(void selectAccount(QString address))
     SLOT(void selectNetwork(int chainId))
     // Search the catalogue offered on this app's current chain. The query goes to the
-    // assets module: the embedded Uniswap list is thousands of rows.
+    // backend: the embedded Uniswap list is thousands of rows.
     SLOT(void searchTokens(QString query))
     // The next page of the current answer, asked for as the picker scrolls to its end.
     // Ignored while a call is live or once the answer said it was complete.

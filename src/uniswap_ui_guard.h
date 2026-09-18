@@ -16,10 +16,15 @@ constexpr int kGuardSlackMs = 1000;
 /// One number for both lanes, so a lane cannot be written with no margin at all.
 constexpr int guardBudgetMs(int legs) { return legs * kCallBudgetMs + kGuardSlackMs; }
 
-/// Every claim in this view is one of these two. Nothing is ever taken for kCallBudgetMs
-/// itself: balances then history is two chained calls, a quote or a probe is one.
+/// Every claim in this view is one of these. Nothing is ever taken for a call's own budget:
+/// balances then swaps is two chained calls, a probe is one.
 constexpr int kOneCallBudgetMs = guardBudgetMs(1);
 constexpr int kTwoCallBudgetMs = guardBudgetMs(2);
+
+/// A quote or a swap is one call to the backend, which builds and then prices or sends inside
+/// one allowance of its own (34 s): this is what the transport waits for it.
+constexpr int kSwapCallBudgetMs = 35000;
+constexpr int kSwapClaimBudgetMs = kSwapCallBudgetMs + kGuardSlackMs;
 
 /// An in-flight claim that EXPIRES. An async callback can simply never fire, so a guard
 /// derived from one is a deadline, never a latch.

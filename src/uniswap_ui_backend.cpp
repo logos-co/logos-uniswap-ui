@@ -11,10 +11,6 @@
 
 namespace {
 
-/// How this app tags the calls it asks the sender to make, so it can find its own rows in a
-/// history it shares with the wallet. Its own claim; the sender's `origin` is the runtime's.
-const QString kApp = QStringLiteral("uniswap_ui");
-
 constexpr int kSendPollMs = 1500;
 constexpr int kPendingPollMs = 5000;
 constexpr int kVerifiedPollMs = 5000;
@@ -41,7 +37,7 @@ UniswapUiBackend::UniswapUiBackend()
     m_dataLane.setLoading = [this](bool on) { setDataLoading(on); };
     m_dataLane.rerun = [this] { loadBalancesAndSwaps(); };
 
-    m_quoteLane.budgetMs = kTwoCallBudgetMs;
+    m_quoteLane.budgetMs = kSwapClaimBudgetMs;
     m_quoteLane.setLoading = [this](bool on) { setQuoteLoading(on); };
     m_quoteLane.rerun = [this] {
         const bool wasEdit = m_quoteAgainInteractive;
@@ -154,12 +150,13 @@ void UniswapUiBackend::handOnLane(AsyncLane &lane)
         lane.setLoading(false);
 }
 
-bool UniswapUiBackend::beginClaim(InFlight &claim, quint64 *slot, const SetLoading &setLoading)
+bool UniswapUiBackend::beginClaim(InFlight &claim, quint64 *slot, const SetLoading &setLoading,
+                                  int budgetMs)
 {
-    if (!claim.take(kOneCallBudgetMs, slot))
+    if (!claim.take(budgetMs, slot))
         return false;
     setLoading(true);
-    QTimer::singleShot(kOneCallBudgetMs + 1, this, [this, &claim, setLoading] {
+    QTimer::singleShot(budgetMs + 1, this, [this, &claim, setLoading] {
         if (!claim.busy())
             setLoading(false);
     });
@@ -218,30 +215,24 @@ void UniswapUiBackend::onContextReady()
         runQuote(m_quoteRequest, false);
     });
 
-    // Each reusable provider announces the slice this app reads. Event callbacks re-enter on
-    // a clean stack; none performs another module call inline.
-    modules().eth_rpc_module.onChain_config_changed([this](int) { refreshSoon(); });
-    modules().eth_rpc_module.onChain_enabled_changed([this](int, bool) { refreshSoon(); });
-    modules().eth_rpc_module.onNetwork_scope_changed([this](QString) { refreshSoon(); });
-    modules().keystore_module.onAccounts_changed([this](int) { refreshSoon(); });
-    modules().evm_assets_module.onOffered_changed([this](int chainId) {
+    // The backend relays what moved underneath it. Event callbacks re-enter on a clean stack;
+    // none performs another module call inline.
+    modules().uniswap_backend.onNetworks_changed([this](int) { refreshSoon(); });
+    modules().uniswap_backend.onAccounts_changed([this](int) { refreshSoon(); });
+    modules().uniswap_backend.onTokens_changed([this](int chainId) {
         if (chainId != shown().chainId)
             return;
         refreshSoon();
         runCatalogueSearch();
     });
-
-    // The sender: the swap in flight moved, a receipt landed, or a row was written — the
-    // wallet's rows included, so the re-read is checked against the selection on screen.
-    modules().tx_sender_module.onSend_status_changed([this](QString requestId) {
+    // A swap in flight moved, a receipt landed, or a row was written — the wallet's rows
+    // included, so the re-read is checked against the selection on screen.
+    modules().uniswap_backend.onSwap_status_changed([this](QString requestId) {
         if (requestId == pendingRequestId())
             QTimer::singleShot(0, this, [this] { pollSwap(); });
     });
-    modules().tx_sender_module.onTx_status_changed([this](QString) {
-        QTimer::singleShot(0, this, [this] { loadBalancesAndSwaps(); });
-    });
-    modules().tx_sender_module.onHistory_changed([this](QString address) {
-        if (address.compare(selectedAccount(), Qt::CaseInsensitive) == 0)
+    modules().uniswap_backend.onSwaps_changed([this](QString address) {
+        if (address.isEmpty() || address.compare(selectedAccount(), Qt::CaseInsensitive) == 0)
             QTimer::singleShot(0, this, [this] { loadBalancesAndSwaps(); });
     });
 
@@ -250,7 +241,7 @@ void UniswapUiBackend::onContextReady()
 
 void UniswapUiBackend::loadNetwork()
 {
-    const QString all = modules().eth_rpc_module.list_chain_configs();
+    const QString all = modules().uniswap_backend.networks();
     if (failed(all, QStringLiteral("networks"))) {
         setNetworksJson(QStringLiteral("[]"));
         setActiveNetworkJson(QStringLiteral("{}"));
@@ -266,7 +257,7 @@ void UniswapUiBackend::loadNetwork()
         return;
     }
 
-    const QJsonArray choices = inScopeNetworks(parseObject(all).value(QStringLiteral("chains")).toArray());
+    const QJsonArray choices = parseObject(all).value(QStringLiteral("networks")).toArray();
     setNetworksJson(toJson(choices));
     const int chosen = chooseChain(choices, shown().chainId);
     if (chosen == 0) {
@@ -277,7 +268,7 @@ void UniswapUiBackend::loadNetwork()
 
     if (shown().chainId == 0)
         return;
-    const QString tokens = modules().evm_assets_module.list_offered(shown().chainId);
+    const QString tokens = modules().uniswap_backend.tokens(shown().chainId);
     ScopedState s = scopeSnapshot();
     const Applied t = applyTokens(s, tokens);
     publishScope(s);
@@ -287,16 +278,16 @@ void UniswapUiBackend::loadNetwork()
 
 void UniswapUiBackend::loadAccounts()
 {
-    const QString reply = modules().keystore_module.list_accounts();
-    const QString labels = modules().keystore_module.get_labels();
-    const QString wallets = modules().keystore_module.get_account_wallets();
+    const QString reply = modules().uniswap_backend.accounts();
     if (failed(reply, QStringLiteral("accounts")))
         return;
     setAccountsJson(member(reply, "accounts"));
-    if (replyOk(labels))
-        setAccountLabelsJson(member(labels, "labels"));
-    if (replyOk(wallets))
-        setAccountWalletsJson(member(wallets, "wallets"));
+    // Names are a courtesy the backend omits when the keystore could not give them.
+    const QJsonObject names = parseObject(reply);
+    if (names.contains(QStringLiteral("labels")))
+        setAccountLabelsJson(member(reply, "labels"));
+    if (names.contains(QStringLiteral("wallets")))
+        setAccountWalletsJson(member(reply, "wallets"));
 
     const QJsonArray list = QJsonDocument::fromJson(accountsJson().toUtf8()).array();
     const bool stillThere = std::any_of(list.begin(), list.end(), [this](const QJsonValue &v) {
@@ -323,7 +314,7 @@ void UniswapUiBackend::loadBalancesAndSwaps()
     const quint64 gen = m_dataGen;
     const QString who = selectedAccount();
     const int chainId = shown().chainId;
-    modules().evm_assets_module.get_balancesAsyncResult(chainId, who, QStringLiteral("alpha"),
+    modules().uniswap_backend.balancesAsyncResult(chainId, who, QString(),
         [this, gen, who, chainId, slot](logos::AsyncResult<QString> bal) {
             if (!m_dataLane.owns(slot))
                 return;
@@ -334,14 +325,14 @@ void UniswapUiBackend::loadBalancesAndSwaps()
                 if (!a.error.isEmpty())
                     setLastError(a.error);
             }
-            modules().tx_sender_module.historyAsyncResult(who, chainId,
+            modules().uniswap_backend.swapsAsyncResult(who, chainId,
                 [this, gen, slot](logos::AsyncResult<QString> hist) {
                     m_dataLane.release(slot);
                     if (!m_dataLane.owns(slot))
                         return;
                     if (gen == m_dataGen) {
                         ScopedState s = scopeSnapshot();
-                        const SwapsApplied h = applySwaps(s, hist.ok() ? hist.value : QString(), kApp);
+                        const SwapsApplied h = applySwaps(s, hist.ok() ? hist.value : QString());
                         if (h.sweep != SweepVerdict::Unchanged)
                             setSweep(h.sweep == SweepVerdict::Run);
                         publishScope(s);
@@ -368,7 +359,7 @@ void UniswapUiBackend::loadFeeTiers()
     if (!beginClaim(m_feesInFlight, &slot, [this](bool on) { setFeeTiersLoading(on); }))
         return;
     const quint64 gen = m_dataGen;
-    modules().fee_module.suggest_feesAsyncResult(shown().chainId,
+    modules().uniswap_backend.fee_tiersAsyncResult(shown().chainId,
         [this, gen, slot](logos::AsyncResult<QString> res) {
             m_feesInFlight.release(slot);
             if (!m_feesInFlight.isCurrent(slot) || gen != m_dataGen)
@@ -451,9 +442,9 @@ void UniswapUiBackend::runCatalogueSearch()
     const quint64 gen = m_dataGen;
     const int offset = m_catalogueOffset;
     const QString query = m_catalogueQuery;
-    // ASYNC, and the query goes to the assets module: the embedded Uniswap list is
-    // thousands of rows, so matching it here would mean pulling all of them across the wire.
-    modules().evm_assets_module.list_availableAsyncResult(
+    // ASYNC, and the query goes to the backend: the embedded Uniswap list is thousands of
+    // rows, so matching it here would mean pulling all of them across the wire.
+    modules().uniswap_backend.catalogueAsyncResult(
         m_catalogueChain, m_catalogueQuery, offset, kCataloguePage,
         [this, gen, slot, offset, query](logos::AsyncResult<QString> res) {
             m_catalogueLane.release(slot);
@@ -491,20 +482,8 @@ void UniswapUiBackend::runQuote(const QString &requestJson, bool interactive)
     if (interactive)
         s.swapError.clear();
     publishScope(s);
-    if (!describesASwap(requestJson)) {
-        setQuoteLoading(false);
-        return;
-    }
-    SwapForm f;
-    const QString bad = parseSwapForm(requestJson, &f);
-    if (!bad.isEmpty()) {
-        if (interactive)
-            surfaceSwapError(bad);
-        setQuoteLoading(false);
-        return;
-    }
-    // An amount of nothing is nothing to price, and not an error either.
-    if (f.amountIn == QLatin1String("0")) {
+    // An incomplete form, or an amount of nothing, is nothing to price and not an error.
+    if (!describesASwap(requestJson) || isNothing(requestJson)) {
         setQuoteLoading(false);
         return;
     }
@@ -517,44 +496,23 @@ void UniswapUiBackend::runQuote(const QString &requestJson, bool interactive)
     const quint64 gen = m_dataGen;
     const quint64 qgen = m_quoteGen;
     const QString priced = requestJson;
-    const int chainId = shown().chainId;
-    // ASYNC, both legs: a quote is a Multicall3 batch of tens of quoter calls through
-    // eth_rpc, then the sender's own reads of the balance and the nonce, and QML calls this
-    // on every keystroke.
-    modules().uniswap_module.build_swapAsyncResult(chainId, swapModuleRequest(f, 0),
-        [this, gen, qgen, slot, priced, interactive, f, chainId](logos::AsyncResult<QString> res) {
+    // ASYNC: the backend quotes (a Multicall3 batch of tens of quoter calls) and has the sender
+    // price the calls, in one allowance, and QML calls this on every keystroke. A form the
+    // backend refuses comes back in words, like any other refusal.
+    modules().uniswap_backend.quoteAsyncResult(withChain(requestJson, shown().chainId),
+        [this, gen, qgen, slot, priced, interactive](logos::AsyncResult<QString> res) {
+            m_quoteLane.release(slot);
             if (!m_quoteLane.owns(slot))
                 return;
-            const QString built = res.ok() ? res.value
-                                           : failure(QStringLiteral("the swap module did not answer"));
-            if (!replyOk(built)) {
-                m_quoteLane.release(slot);
-                if (gen == m_dataGen && qgen == m_quoteGen) {
-                    ScopedState st = scopeSnapshot();
-                    applyQuote(st, built, priced, interactive);
-                    publishScope(st);
-                }
-                handOnLane(m_quoteLane);
-                return;
+            if (gen == m_dataGen && qgen == m_quoteGen) {
+                ScopedState st = scopeSnapshot();
+                applyQuote(st, res.ok() ? res.value : failure(QStringLiteral("the swap backend did not answer")),
+                           priced, interactive);
+                publishScope(st);
             }
-            const QJsonObject b = parseObject(built);
-            // The fee: the sender prices the calls, without side effects.
-            modules().tx_sender_module.prepareAsyncResult(senderRequest(b, f, kApp, QString(), chainId),
-                [this, gen, qgen, slot, priced, interactive, f, b](logos::AsyncResult<QString> fee) {
-                    m_quoteLane.release(slot);
-                    if (!m_quoteLane.owns(slot))
-                        return;
-                    if (gen == m_dataGen && qgen == m_quoteGen) {
-                        ScopedState st = scopeSnapshot();
-                        applyQuote(st, mergedQuote(b, fee.ok() ? fee.value : QString(), f), priced,
-                                   interactive);
-                        publishScope(st);
-                    }
-                    handOnLane(m_quoteLane);
-                },
-                Timeout(kCallBudgetMs));
+            handOnLane(m_quoteLane);
         },
-        Timeout(kCallBudgetMs));
+        Timeout(kSwapCallBudgetMs));
 }
 
 void UniswapUiBackend::setQuoteAutoRefresh(bool on)
@@ -605,12 +563,6 @@ void UniswapUiBackend::submitSwap(QString requestJson)
     ScopedState s = scopeSnapshot();
     s.swapError.clear();
     publishScope(s);
-    SwapForm f;
-    const QString bad = parseSwapForm(requestJson, &f);
-    if (!bad.isEmpty()) {
-        surfaceSwapError(bad);
-        return;
-    }
     quint64 slot = 0;
     if (!beginClaim(m_submitInFlight, &slot, [this](bool on) {
             // The claim lapsing with the submit still open is a submit nobody answered, and
@@ -619,49 +571,31 @@ void UniswapUiBackend::submitSwap(QString requestJson)
                 m_submitting = false;
                 surfaceSwapError(QStringLiteral("the swap was not submitted: no answer"));
             }
-        }))
+        }, kSwapClaimBudgetMs))
         return;
     m_submitting = true;
     const quint64 gen = m_dataGen;
-    const int chainId = shown().chainId;
-    const qint64 deadline = QDateTime::currentSecsSinceEpoch() + qint64(f.deadlineMins) * 60;
-    // A FRESH quote at submit: the figures on screen may be a block old, and the deadline
-    // and the minimum are set from this one. Then the sender takes the calls.
-    modules().uniswap_module.build_swapAsyncResult(chainId, swapModuleRequest(f, deadline),
-        [this, gen, slot, f, chainId](logos::AsyncResult<QString> res) {
+    // The backend builds the swap afresh (the figures on screen may be a block old, and the
+    // minimum and the deadline are set from this build) and asks the sender to make it.
+    modules().uniswap_backend.swapAsyncResult(withChain(requestJson, shown().chainId),
+        [this, gen, slot](logos::AsyncResult<QString> sent) {
+            m_submitInFlight.release(slot);
+            m_submitting = false;
             if (!m_submitInFlight.isCurrent(slot))
                 return;
-            const QString built = res.ok() ? res.value
-                                           : failure(QStringLiteral("the swap module did not answer"));
-            if (!replyOk(built)) {
-                m_submitInFlight.release(slot);
-                m_submitting = false;
-                surfaceSwapError(refusal(built, QStringLiteral("swap")));
+            ScopedState after = scopeSnapshot();
+            const SendApplied a = applySend(after,
+                sent.ok() ? sent.value : failure(QStringLiteral("the swap backend did not answer")),
+                selectionHeld(gen));
+            publishScope(after);
+            if (!a.accepted)
                 return;
-            }
-            const QJsonObject b = parseObject(built);
-            const QString purpose = swapPurpose(f, b);
-            modules().tx_sender_module.sendAsyncResult(senderRequest(b, f, kApp, purpose, chainId),
-                [this, gen, slot](logos::AsyncResult<QString> sent) {
-                    m_submitInFlight.release(slot);
-                    m_submitting = false;
-                    if (!m_submitInFlight.isCurrent(slot))
-                        return;
-                    ScopedState after = scopeSnapshot();
-                    const SendApplied a = applySend(after,
-                        sent.ok() ? sent.value : failure(QStringLiteral("the sender did not answer")),
-                        selectionHeld(gen));
-                    publishScope(after);
-                    if (!a.accepted)
-                        return;
-                    setLastSwapOutcomeJson(QString());
-                    setPendingApprovalHandle(a.handle);
-                    setPendingRequestId(a.requestId);
-                    m_sendPoll.start();
-                },
-                Timeout(kCallBudgetMs));
+            setLastSwapOutcomeJson(QString());
+            setPendingApprovalHandle(a.handle);
+            setPendingRequestId(a.requestId);
+            m_sendPoll.start();
         },
-        Timeout(kCallBudgetMs));
+        Timeout(kSwapCallBudgetMs));
 }
 
 void UniswapUiBackend::pollSwap()
@@ -676,7 +610,7 @@ void UniswapUiBackend::pollSwap()
     const QString id = pendingRequestId();
     // ASYNC: `send_status` IS the broadcast — the first poll after the approval collects the
     // signatures and sends every leg, which is seconds on a real node.
-    modules().tx_sender_module.send_statusAsyncResult(id,
+    modules().uniswap_backend.swap_statusAsyncResult(id,
         [this, slot, id](logos::AsyncResult<QString> res) {
             m_pollInFlight.release(slot);
             if (!m_pollInFlight.isCurrent(slot))
@@ -685,8 +619,9 @@ void UniswapUiBackend::pollSwap()
             if (id != pendingRequestId())
                 return;
             const QString reply = res.ok() ? res.value : QString();
-            // Silence is not an outcome; the next tick asks again.
-            if (reply.isEmpty())
+            // Silence is not an outcome, and neither is anything the backend calls not final:
+            // a send still moving, or a refusal that left it untouched. The next tick asks again.
+            if (reply.isEmpty() || !parseObject(reply).value(QStringLiteral("final")).toBool())
                 return;
             if (failed(reply, QStringLiteral("swap"))) {
                 m_sendPoll.stop();
@@ -696,11 +631,6 @@ void UniswapUiBackend::pollSwap()
             }
             const QJsonObject settled = parseObject(reply);
             const QString status = settled.value(QStringLiteral("status")).toString();
-            const bool live = status == QLatin1String("awaitingApproval")
-                || status == QLatin1String("broadcasting")
-                || settled.value(QStringLiteral("blocked")).toBool();
-            if (live)
-                return;
 
             m_sendPoll.stop();
             QJsonObject outcome{{QStringLiteral("status"), status}};
@@ -727,7 +657,7 @@ void UniswapUiBackend::cancelSwap()
 {
     if (pendingRequestId().isEmpty())
         return;
-    modules().tx_sender_module.cancel_send(pendingRequestId());
+    modules().uniswap_backend.cancel_swap(pendingRequestId());
     m_sendPoll.stop();
     setLastSwapOutcomeJson(QStringLiteral("{\"status\":\"cancelled\"}"));
     setPendingApprovalHandle(QString());
@@ -752,7 +682,7 @@ void UniswapUiBackend::refreshVerifiedProxy()
         applyVerifiedProxy(QString());
         return;
     }
-    modules().eth_rpc_module.verified_proxy_statusAsyncResult(shown().chainId,
+    modules().uniswap_backend.verdictAsyncResult(shown().chainId,
         [this, slot](logos::AsyncResult<QString> verdict) {
             m_vpInFlight.release(slot);
             applyVerifiedProxy(verdict.ok() ? verdict.value : QString());
@@ -762,15 +692,6 @@ void UniswapUiBackend::refreshVerifiedProxy()
 
 void UniswapUiBackend::refreshPending()
 {
-    quint64 slot = 0;
-    if (selectedAccount().isEmpty() || !m_pendingInFlight.take(kOneCallBudgetMs, &slot))
-        return;
-    const quint64 gen = m_dataGen;
-    modules().tx_sender_module.refresh_pendingAsyncResult(selectedAccount(),
-        [this, gen, slot](logos::AsyncResult<QString>) {
-            m_pendingInFlight.release(slot);
-            if (gen == m_dataGen)
-                loadBalancesAndSwaps();
-        },
-        Timeout(kCallBudgetMs));
+    // Reading the swaps sweeps the receipts that are due first.
+    loadBalancesAndSwaps();
 }

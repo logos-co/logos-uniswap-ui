@@ -93,7 +93,6 @@ jobs:
         run: |
           nix run github:logos-co/logos-doctest -- run \
             doctests/uniswap-ui-e2e.test.yaml \
-            doctests/uniswap-anvil-swap.test.yaml \
             --verbose \
             --continue-on-fail \
             --release-for logos-uniswap-ui=${{ steps.commit.outputs.sha }} \

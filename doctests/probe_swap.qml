@@ -89,7 +89,7 @@ Item {
         property string pendingApprovalHandle: ""
         property string lastSwapOutcomeJson: ""
         property string swapsJson: JSON.stringify([{
-            requestId: "snd_1", status: "confirmed", timestamp: 1756600000, origin: "host",
+            requestId: "snd_1", status: "confirmed", timestamp: 1756600000, origin: "uniswap_backend", via: "uniswap_ui",
             hashes: ["0xa0", "0xa1"], label: "Swap USDC for ETH on Uniswap V3",
             swap: { kind: "swap", symbolIn: "USDC", symbolOut: "ETH", amountIn: "1000000000", decimalsIn: 6,
                     amountOut: "333277787035494084", decimalsOut: 18, amountOutMin: "331611398100316613",
@@ -277,7 +277,10 @@ Item {
             var screen = nav.currentItem
             check("...titled the same", probe.find(screen, "swapDetailTitle").text, "Swap 1000 USDC for 0.33327 ETH")
             check("...with the minimum it was sent with", probe.find(screen, "swapDetailMin").value, "0.33161 ETH")
-            check("...who asked, as the sender attested", probe.find(screen, "swapDetailOrigin").value, "host")
+            check("...who asked, then the backend the sender attested", probe.find(screen, "swapDetailOrigin").value,
+                  "uniswap_ui, through uniswap_backend")
+            check("...and a row from before the backend names its origin alone", v.askedBy({ origin: "host" }), "host")
+            check("...or nothing at all", v.askedBy({}), "—")
             check("...and both legs", probe.find(screen, "swapLegLabel_1").text, "2. Swap USDC for ETH on Uniswap V3")
             check("...each with its hash to copy", probe.find(screen, "swapLegHash_0").copyValue, "0xa0")
 

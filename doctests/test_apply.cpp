@@ -1,5 +1,5 @@
-// Every guard that decides whether a reply reaches the screen, and every shape this view
-// hands its two modules, as a table. The transitions live in src/uniswap_ui_apply.h and are
+// Every guard that decides whether a reply reaches the screen, and the request this view hands
+// its backend, as a table. The transitions live in src/uniswap_ui_apply.h and are
 // the only things that write a scoped value; the backend snapshots, calls one, and publishes.
 //
 //   c++ -std=c++17 -fPIC -I../src $(pkg-config --cflags --libs Qt6Core) test_apply.cpp -o /tmp/t && /tmp/t
@@ -12,8 +12,6 @@
 namespace {
 int failures = 0;
 const char *ALICE = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
-const char *USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
-const char *ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
 
 void expect(const char *label, const char *claim, bool got)
 {
@@ -42,25 +40,16 @@ ScopedState screen()
     return s;
 }
 
-QString row(const char *hash, const char *reqId, int leg, const char *status, const char *kind, const char *app, double ts)
-{
-    return QStringLiteral(R"({"hash":"%1","requestId":"%2","leg":%3,"legs":2,"status":"%4","timestamp":%5,"label":"L%3","origin":"host","to":"0x1","meta":{"app":"%6","kind":"%7","symbolIn":"USDC","symbolOut":"ETH","amountIn":"1000000000","decimalsIn":6,"amountOut":"5","decimalsOut":18}})")
-        .arg(hash, reqId).arg(leg).arg(status).arg(ts).arg(app, kind);
-}
 } // namespace
 
 int main()
 {
-    std::printf("networks: only enabled in-scope records, with a UI-local default\n");
+    std::printf("networks: the backend's choices, with a UI-local default\n");
     {
-        const QJsonArray records = QJsonDocument::fromJson(R"([
-          {"chainId":11155111,"name":"Sepolia","enabled":true,"inScope":true,"testnet":true},
-          {"chainId":1,"name":"Ethereum","enabled":true,"inScope":true,"testnet":false},
-          {"chainId":560048,"name":"Hoodi","enabled":false,"inScope":false,"testnet":true},
-          {"chainId":10,"name":"Optimism","enabled":true,"inScope":false,"testnet":false}
+        const QJsonArray choices = QJsonDocument::fromJson(R"([
+          {"chainId":11155111,"name":"Sepolia","testnet":true},
+          {"chainId":1,"name":"Ethereum","testnet":false}
         ])").array();
-        const QJsonArray choices = inScopeNetworks(records);
-        expect("disabled and out-of-scope records", "are absent", choices.size() == 2);
         expect("the current chain remains this app's choice", "Sepolia", chooseChain(choices, 11155111) == 11155111);
         expect("an unavailable choice falls back to a mainnet", "Ethereum", chooseChain(choices, 99) == 1);
         QJsonArray testnets; testnets.append(choices.first());
@@ -114,93 +103,40 @@ int main()
         same("a tick that succeeds after a failed keystroke clears the refusal", s.swapError, QString());
     }
 
-    std::printf("\nthis app's swaps, out of a history it shares with the wallet\n");
+    std::printf("\nthis app's swaps, grouped by the backend\n");
     {
-        const QString rows = QStringLiteral("[%1,%2,%3,%4]")
-            .arg(row("0xa1", "snd_1", 1, "confirmed", "swap", "uniswap_ui", 200),
-                 row("0xa0", "snd_1", 0, "confirmed", "approve", "uniswap_ui", 199),
-                 row("0xb0", "snd_2", 0, "pending", "swap", "uniswap_ui", 300),
-                 row("0xc0", "", 0, "confirmed", "native", "", 400));
         ScopedState s = screen();
-        const SwapsApplied a = applySwaps(s, QStringLiteral(R"({"ok":true,"chainId":11155111,"address":"%1","stillDue":true,"transactions":%2})").arg(q(ALICE), rows), QStringLiteral("uniswap_ui"));
+        const SwapsApplied a = applySwaps(s, QStringLiteral(R"({"ok":true,"chainId":11155111,"address":"%1","stillDue":true,"swaps":[{"requestId":"snd_2","status":"pending"},{"requestId":"snd_1","status":"confirmed"}]})").arg(q(ALICE)));
         expect("the reply for this selection", "is acted on", a.acted);
         expect("...and the sweep runs while something is due", "Run", a.sweep == SweepVerdict::Run);
         const QJsonArray groups = QJsonDocument::fromJson(s.swaps.toUtf8()).array();
-        expect("the wallet's own row is not one of ours", "two bundles", groups.size() == 2);
-        same("newest first", groups.at(0).toObject().value(QStringLiteral("requestId")).toString(), QStringLiteral("snd_2"));
-        const QJsonObject b1 = groups.at(1).toObject();
-        same("the two-leg bundle is one entry", b1.value(QStringLiteral("requestId")).toString(), QStringLiteral("snd_1"));
-        expect("...its legs in order", "approve then swap", b1.value(QStringLiteral("legs")).toArray().at(0).toObject().value(QStringLiteral("leg")).toInt() == 0);
-        same("...titled by the swap leg's label", b1.value(QStringLiteral("label")).toString(), QStringLiteral("L1"));
-        same("...with the swap leg's meta", b1.value(QStringLiteral("swap")).toObject().value(QStringLiteral("kind")).toString(), QStringLiteral("swap"));
-        same("...both hashes", QString::number(b1.value(QStringLiteral("hashes")).toArray().size()), QStringLiteral("2"));
-        same("...settled as a whole", b1.value(QStringLiteral("status")).toString(), QStringLiteral("confirmed"));
-        same("the pending one says so", groups.at(0).toObject().value(QStringLiteral("status")).toString(), QStringLiteral("pending"));
-        same("...and carries who asked, as the sender attested", b1.value(QStringLiteral("origin")).toString(), QStringLiteral("host"));
-    }
-    {
-        QJsonArray legs;
-        legs.append(parseObject(row("0x1", "r", 0, "confirmed", "approve", "uniswap_ui", 1)));
-        legs.append(parseObject(row("0x2", "r", 1, "failed", "swap", "uniswap_ui", 2)));
-        same("an approval that landed and a swap that reverted is a FAILED swap", bundleStatus(legs), QStringLiteral("failed"));
-        QJsonArray stalled;
-        QJsonObject st = parseObject(row("0x3", "r", 0, "pending", "swap", "uniswap_ui", 3));
-        st.insert(QStringLiteral("stalled"), true);
-        stalled.append(st);
-        same("a stalled leg is a stalled swap", bundleStatus(stalled), QStringLiteral("stalled"));
+        expect("the backend's order is kept", "snd_2 first",
+               groups.size() == 2 && groups.at(0).toObject().value(QStringLiteral("requestId")).toString() == QStringLiteral("snd_2"));
+        const SwapsApplied done = applySwaps(s, QStringLiteral(R"({"ok":true,"chainId":11155111,"address":"%1","stillDue":false,"swaps":[]})").arg(q(ALICE)));
+        expect("nothing due", "stops the sweep", done.sweep == SweepVerdict::Stop);
+        same("...and an empty list is an answer", s.swaps, QStringLiteral("[]"));
     }
     {
         ScopedState s = screen();
-        const SwapsApplied a = applySwaps(s, QStringLiteral(R"({"ok":true,"chainId":1,"address":"%1","stillDue":false,"transactions":[]})").arg(q(ALICE)), QStringLiteral("uniswap_ui"));
-        expect("a history for another chain", "is dropped whole", !a.acted);
+        const SwapsApplied a = applySwaps(s, QStringLiteral(R"({"ok":true,"chainId":1,"address":"%1","stillDue":false,"swaps":[{"requestId":"x"}]})").arg(q(ALICE)));
+        expect("swaps for another chain", "are dropped whole", !a.acted);
         same("...leaving the list as it was", s.swaps, QStringLiteral("[]"));
-        const SwapsApplied f = applySwaps(s, q(R"({"ok":false,"error":"no node"})"), QStringLiteral("uniswap_ui"));
+        const SwapsApplied f = applySwaps(s, q(R"({"ok":false,"error":"no node"})"));
         expect("a read that FAILED", "says nothing about the sweep", f.sweep == SweepVerdict::Unchanged);
         same("...and the list is UNKNOWN, not empty", s.swaps, QString());
     }
 
-    std::printf("\nthe form, the module request, the sender request\n");
+    std::printf("\nthe request the backend is handed\n");
     {
-        SwapForm f;
-        const QString bad = parseSwapForm(q(R"({"from":"0xf39F","tokenIn":"ETH","tokenOut":"0xA0b8","amountUnits":"1.2345678901234567890123","decimalsIn":18})"), &f);
-        expect("more places than the token has", "is refused in words", bad.contains(QStringLiteral("18 decimal places")));
-        const QString ok = parseSwapForm(q(R"({"from":"0xf39F","tokenIn":"0xA0b8","tokenOut":"ETH","amountUnits":"1000","decimalsIn":6,"decimalsOut":18,"symbolIn":"USDC","symbolOut":"ETH","tier":"fast","slippageBps":100,"deadlineMins":20})"), &f);
-        same("a good form parses", ok, QString());
-        same("...to base units", f.amountIn, QStringLiteral("1000000000"));
-        same("...keeping the tier", f.tier, QStringLiteral("fast"));
-        const QString bps = parseSwapForm(q(R"({"from":"0xf39F","tokenIn":"0xA0b8","tokenOut":"ETH","amountUnits":"1","decimalsIn":6,"slippageBps":6000})"), &f);
-        expect("slippage above 50%", "is refused", bps.contains(QStringLiteral("5000")));
-        parseSwapForm(q(R"({"from":"0xf39F","tokenIn":"0xA0b8","tokenOut":"ETH","amountUnits":"1000","decimalsIn":6,"decimalsOut":18,"symbolIn":"USDC","symbolOut":"ETH","slippageBps":100})"), &f);
-        const QJsonObject m = parseObject(swapModuleRequest(f, 1789000000));
-        same("the module is asked with the owner", m.value(QStringLiteral("owner")).toString(), QStringLiteral("0xf39F"));
-        same("...the base-unit amount", m.value(QStringLiteral("amountIn")).toString(), QStringLiteral("1000000000"));
-        same("...the slippage", QString::number(m.value(QStringLiteral("slippageBps")).toInt()), QStringLiteral("100"));
-        same("...and the deadline", QString::number(qint64(m.value(QStringLiteral("deadline")).toDouble())), QStringLiteral("1789000000"));
-        expect("a quote asks for no deadline", "absent", !parseObject(swapModuleRequest(f, 0)).contains(QStringLiteral("deadline")));
-
-        const QJsonObject built = parseObject(QStringLiteral(R"({"ok":true,"amountOut":"5","amountOutMin":"4","route":{"version":"V2"},"calls":[{"kind":"approve","to":"%1","value":"0x0","data":"0x09","gasLimitHint":60000,"label":"Approve USDC for Uniswap"},{"kind":"swap","to":"%2","value":"0x0","data":"0x18","gasLimitHint":180000,"label":"Swap USDC for ETH on Uniswap V2"}]})").arg(q(USDC), q(ROUTER)));
-        const QJsonObject sr = parseObject(senderRequest(built, f, QStringLiteral("uniswap_ui"), QStringLiteral("P"), 11155111));
-        const QJsonArray calls = sr.value(QStringLiteral("calls")).toArray();
-        expect("the sender gets both calls", "in order", calls.size() == 2 && calls.at(0).toObject().value(QStringLiteral("label")).toString().startsWith(QStringLiteral("Approve")));
-        expect("the approve leg carries no gas limit", "the estimator prices it", !calls.at(0).toObject().contains(QStringLiteral("gasLimit")));
-        expect("the swap leg carries none either", "the estimator simulates it behind the approval", !calls.at(1).toObject().contains(QStringLiteral("gasLimit")));
-        const QJsonObject meta = calls.at(1).toObject().value(QStringLiteral("meta")).toObject();
-        same("every leg is tagged as this app's", meta.value(QStringLiteral("app")).toString(), QStringLiteral("uniswap_ui"));
-        same("...and carries what the swap was", meta.value(QStringLiteral("amountOutMin")).toString(), QStringLiteral("4"));
-        same("the purpose names the amounts", swapPurpose(f, built), QStringLiteral("Swap 1000 USDC for at least 0.000000000000000004 ETH on Uniswap"));
-        same("the tier rides along", sr.value(QStringLiteral("tier")).toString(), QStringLiteral("normal"));
-        same("and the chain", QString::number(sr.value(QStringLiteral("chainId")).toInt()), QStringLiteral("11155111"));
-
-        const QJsonObject merged = parseObject(mergedQuote(parseObject(QStringLiteral(R"({"ok":true,"chainId":11155111,"owner":"0xf39F","amountOut":"333277787035494084","amountOutMin":"331611398100316613","balanceIn":"5000000000000"})")), q(R"({"ok":true,"feeCeilingWeiDisplay":"0.0004"})"), f));
-        same("the merged quote names the account", merged.value(QStringLiteral("from")).toString(), QStringLiteral("0xf39F"));
-        same("...carries the display of the output", merged.value(QStringLiteral("amountOutDisplay")).toString(), QStringLiteral("0.33327"));
-        same("...and of the minimum", merged.value(QStringLiteral("amountOutMinDisplay")).toString(), QStringLiteral("0.33161"));
-        same("...the rate", merged.value(QStringLiteral("rate")).toString(), QStringLiteral("0.000333278"));
-        expect("...whether the balance covers it", "it does", merged.value(QStringLiteral("insufficientBalance")).toBool() == false);
-        same("...and the sender's pricing under fee", merged.value(QStringLiteral("fee")).toObject().value(QStringLiteral("feeCeilingWeiDisplay")).toString(), QStringLiteral("0.0004"));
-        const QJsonObject nofee = parseObject(mergedQuote(parseObject(QStringLiteral(R"({"ok":true,"chainId":11155111,"owner":"0xf39F","amountOut":"5","amountOutMin":"4","balanceIn":"1"})")), QString(), f));
-        expect("a sender that did not answer", "is a fee that failed, and the quote still stands", nofee.value(QStringLiteral("ok")).toBool() && nofee.value(QStringLiteral("fee")).toObject().value(QStringLiteral("ok")).toBool() == false);
-        expect("a balance short of the amount", "says so", nofee.value(QStringLiteral("insufficientBalance")).toBool());
+        const QString form = q(R"({"from":"0xf39F","tokenIn":"0xA0b8","tokenOut":"ETH","amountUnits":"1000","decimalsIn":6})");
+        const QJsonObject r = parseObject(withChain(form, 11155111));
+        expect("the form goes as it is", "same fields", r.value(QStringLiteral("amountUnits")).toString() == QStringLiteral("1000")
+               && r.value(QStringLiteral("decimalsIn")).toInt() == 6);
+        expect("...on the chain on screen", "11155111", r.value(QStringLiteral("chainId")).toInt() == 11155111);
+        for (const char *nothing : {"", "0", "0.00", ".", " 0 "})
+            expect(nothing, "is nothing to price", isNothing(QStringLiteral(R"({"amountUnits":"%1"})").arg(q(nothing))));
+        expect("0.5", "is an amount", !isNothing(q(R"({"amountUnits":"0.5"})")));
+        expect("letters", "are the backend's to refuse, in words", !isNothing(q(R"({"amountUnits":"ten"})")));
     }
 
     std::printf("\nthe catalogue, in pages: a later page grows the picker's answer, or is nothing\n");

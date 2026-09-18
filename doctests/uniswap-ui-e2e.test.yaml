@@ -3,7 +3,7 @@ description: |
   `doctests/run_tables.sh` already loads `UniswapView.qml` offscreen against a
   **fabricated** backend, and asserts a great deal about it. What it cannot say is
   whether the thing that ships works: whether the built plugin loads in a real
-  host, finds its seven reusable EVM modules, and
+  host, finds its backend and the seven reusable EVM modules under it, and
   comes up at all.
 
   That is the whole of what this proves, and it is deliberately hermetic — no
@@ -16,10 +16,11 @@ sections:
   - title: "Build the pieces"
     step: true
     text: |
-      The Uniswap app composes `eth_rpc_module`, `token_list_module`,
-      `keystore_module`, `fee_module`, `uniswap_module`, `tx_sender_module` and
-      `evm_assets_module` directly. It has no wallet-backend dependency.
-      `capability_module` is not bundled with the standalone host either.
+      The Uniswap app is a view over `uniswap_backend`, which composes
+      `eth_rpc_module`, `token_list_module`, `keystore_module`, `fee_module`,
+      `uniswap_module`, `tx_sender_module` and `evm_assets_module`. Every one of
+      them has to be on disk for the backend to load. `capability_module` is not
+      bundled with the standalone host either.
     steps:
       - title: "The host and the test driver"
         run: |
@@ -38,6 +39,9 @@ sections:
       - title: "It really produced a plugin"
         check_file: "result-ui/plugins"
 
+      - title: "Build the Uniswap backend"
+        run: "nix build 'github:logos-co/logos-uniswap-backend#install' --no-write-lock-file -o result-backend"
+        code_block: "nix build 'github:logos-co/logos-uniswap-backend#install' --no-write-lock-file -o result-backend"
       - title: "Build the Uniswap module"
         run: "nix build 'github:logos-co/logos-evm-uniswap-module#install' --no-write-lock-file -o result-uniswap"
         code_block: "nix build 'github:logos-co/logos-evm-uniswap-module#install' --no-write-lock-file -o result-uniswap"
@@ -68,7 +72,7 @@ sections:
         run: |
           set -euo pipefail
           rm -rf tree && mkdir -p tree/modules tree/plugins
-          for r in result-uniswap result-sender result-keystore result-rpc result-fee result-tokens result-assets result-capability; do
+          for r in result-backend result-uniswap result-sender result-keystore result-rpc result-fee result-tokens result-assets result-capability; do
             cp -r $r/modules/* tree/modules/
           done
           cp -r result-ui/plugins/* tree/plugins/
@@ -79,6 +83,7 @@ sections:
           cp -r result-*/modules/* tree/modules/
           cp -r result-ui/plugins/* tree/plugins/
         expect_contains:
+          - "uniswap_backend"
           - "evm_assets_module"
           - "uniswap_module"
           - "tx_sender_module"
