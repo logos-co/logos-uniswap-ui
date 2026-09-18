@@ -90,7 +90,9 @@ sections:
     step: true
     text: |
       The standalone host has no Ethereum RPC settings UI to seed the shared registry, so
-      this hermetic session starts with one enabled mainnet row. That is the same persisted
+      this hermetic session starts with one enabled mainnet row. It asks for verified
+      routing and stages no verified proxy, so the view must say so: the verdict is read
+      on start, not only after something failed. That is the same persisted
       state the settings app supplies in Basecamp and lets this test prove that Uniswap reads
       the registry instead of inventing its own network list.
 
@@ -110,7 +112,8 @@ sections:
                 "name": "Ethereum",
                 "nativeSymbol": "ETH",
                 "nativeDecimals": 18,
-                "testnet": false
+                "testnet": false,
+                "verifiedProxyMode": "required"
               }
             }
       - title: "Seed the mainnet scope"
@@ -139,6 +142,15 @@ sections:
               action: wait_for
               texts: ["Ethereum"]
               timeout: 20000
+            - name: "The verified-proxy banner shows chain 1's verdict"
+              action: wait_for
+              texts: ["The Verified Proxy module is not running."]
+              timeout: 45000
+            - name: "...and the banner is on screen"
+              action: expect_property
+              find_value: "verifiedBanner"
+              property: "visible"
+              value: true
             - name: "The network selector defaults to Ethereum, which only a wired chain registry can do"
               action: expect_property
               find_value: "chainPicker"

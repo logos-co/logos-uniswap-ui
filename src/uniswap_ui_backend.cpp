@@ -394,6 +394,8 @@ void UniswapUiBackend::refresh()
     loadAccounts();
     loadBalancesAndSwaps();
     loadFeeTiers();
+    // Also what starts the verdict poll: nothing else does on a healthy start.
+    refreshVerifiedProxy();
 
     m_inFlight = false;
     if (m_refreshAgain) {
