@@ -1,7 +1,8 @@
 # uniswap_ui
 
-Swap any two EVM assets on Uniswap. The app composes reusable chain, asset, account, fee,
-swap, and sender modules directly; `eth_wallet_backend` is deliberately not a dependency.
+Swap any two EVM assets on Uniswap. The app is a view over `uniswap_backend`, which composes
+the reusable chain, token, asset, account, fee, quote and sender modules; this view calls no
+other module, and `eth_wallet_backend` is deliberately not in the graph.
 
 Information design follows the wallet, which follows MetaMask: one question per screen, and
 **the active network visible at all times** — the selector follows the backend's initial
@@ -15,19 +16,17 @@ that manage accounts and token lists.
 
 ## What this module cannot do
 
-It holds no secret and **sends nothing**. It asks `uniswap_module` for a quote and the calls
-that make it, and asks `tx_sender_module` to send them; the human's yes is taken by
+It holds no secret and **sends nothing**. It asks `uniswap_backend`, which quotes through
+`uniswap_module` and hands the calls to `tx_sender_module`; the human's yes is taken by
 `evm_signer_ui`, once, for every call of the swap. There is no password parameter anywhere
 in `src/uniswap_ui.rep`, and there never may be; `doctests/assert_ui.py` asserts the absence.
 
-Its chain dropdown is UI-local. Choices come from the enabled chains in
-`eth_rpc_module`'s device-wide scope; when the old choice leaves that set, the app chooses
-the first in-scope mainnet (or the first remaining chain).
+Its chain dropdown is UI-local. Choices are the backend's networks: the enabled chains in
+`eth_rpc_module`'s device-wide scope that Uniswap is deployed on. When the old choice leaves
+that set, the app chooses the first mainnet (or the first remaining chain).
 
-The keystore dependency is read-only here: this app calls only `list_accounts`, `get_labels`,
-and `get_account_wallets`, and listens for `accounts_changed`. A dependency token technically
-grants the whole client surface, but the keystore's role gate still refuses signing and
-mutation to this non-approver, non-custodian module. Every transaction leaves through
+This app holds no keystore client at all. Accounts reach it through `uniswap_backend`, whose
+keystore client only reads (its source guard asserts it), and every transaction leaves through
 `tx_sender_module`, which owns the approval flow.
 
 ## Why a swap is one approval and, often, two transactions
@@ -55,8 +54,8 @@ previous output the instant it is typed rather than when the re-quote lands.
 
 ## Money
 
-Amounts are exact integer work, in `src/uniswap_ui_units.h`, tested by
-`doctests/test_units.cpp`. A typed amount with more decimal places than the token has is
+Amounts are exact integer work, done by `uniswap_backend` (`rust-lib/src/units.rs` there,
+with its tests); the quote arrives with every display string already derived. A typed amount with more decimal places than the token has is
 refused in words, never rounded; a displayed amount is truncated to five places, never
 rounded up; "<0.00001" is an amount that is not nothing. The one double in the file is the
 rate line, which is a display of a ratio and says so.
@@ -73,31 +72,32 @@ every change to the form.
 
 ## Whose swap is it
 
-The sender stamps every row with the `origin` the runtime attested, and this app tags every
-call it asks for with `meta.app = "uniswap_ui"`. Activity is built from the tag — it is how
-this app finds its rows in a history it shares with the wallet — and the swap's own screen
-shows the origin beside it. The wallet's Activity shows the same rows as calls, titled with
-the labels this app gave them.
+The sender stamps every row with the `origin` the runtime attested — `uniswap_backend`, the
+module that asks it — and the backend tags every call with `meta.app = "uniswap_ui"` and
+`meta.via`, the module that asked the backend. The Signer's purpose line names both: "Swap …
+on Uniswap, via uniswap_ui [asked by uniswap_backend]". Activity is built from the tag — it
+is how this app finds its rows in a history it shares with the wallet — and the swap's own
+screen shows who asked: "uniswap_ui, through uniswap_backend". The wallet's Activity shows
+the same rows as calls, titled with the labels the backend gave them.
 
 ## Testing
 
 ```bash
-doctests/run_tables.sh          # test_units.cpp, test_apply.cpp, then the two view probes
+doctests/run_tables.sh          # test_apply.cpp, then the two view probes
 python3 doctests/assert_ui.py   # the claims a source file can answer for
 ```
 
 `doctests/test_apply.cpp` runs every guard that decides whether a reply reaches the screen,
-and every shape this view hands its two modules. `doctests/probe_swap.qml` and
-`probe_intents.qml` stand the view up under an offscreen Qt with a fabricated backend and
-assert what it **says**: every state of the swap button, the quote rows, the review, the
+and the request this view hands its backend. The swap rules themselves (the form, the
+sender's request, the purpose, the grouping of history) are the backend's, tested there.
+`doctests/probe_swap.qml` and `probe_intents.qml` stand the view up under an offscreen Qt with
+a fabricated backend and assert what it **says**: every state of the swap button, the quote rows, the review, the
 signer hand-off and each of its answers.
 
-`doctests/uniswap-ui-e2e.test.yaml` builds the plugin and the reusable modules under it, stands
-a real `logos-standalone-app` up, and drives the three sections over the QML inspector —
-hermetic, with an empty keystore. `doctests/uniswap-anvil-swap.test.yaml` runs the three
-modules the way the view runs them, with `logosctl` alone, against a local Anvil chain
-holding a mock V2 router: quote, build, one approval through `evm_signer_cli`, two
-transactions, both receipts, and the chain read back with `cast`.
+`doctests/uniswap-ui-e2e.test.yaml` builds the plugin, the backend and the reusable modules
+under it, stands a real `logos-standalone-app` up, and drives the three sections over the QML
+inspector — hermetic, with an empty keystore. The headless swap against a local Anvil chain
+lives with the backend, in `logos-uniswap-backend/doctests/`.
 
 ## Building
 
@@ -106,15 +106,10 @@ nix build .#lgx-portable   # the installable package (Basecamp / logosctl)
 nix build .#install        # the dev variant, for logos-standalone-app
 ```
 
-For a complete local composition, point every changing input at its checkout:
+For a local composition, point the backend at its checkout (and the backend's own inputs at
+theirs, the same way):
 
 ```bash
 nix build .#install --no-write-lock-file \
-  --override-input eth_rpc_module path:../eth-rpc-module \
-  --override-input token_list_module path:../logos-evm-token-list-module \
-  --override-input keystore_module path:../keystore-module \
-  --override-input fee_module path:../logos-evm-fee-module \
-  --override-input uniswap_module path:../uniswap-module \
-  --override-input tx_sender_module path:../logos-evm-tx-sender-module \
-  --override-input evm_assets_module path:../logos-evm-assets-module
+  --override-input uniswap_backend path:../logos-uniswap-backend
 ```

@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "uniswap_ui_scope.h"
-#include "uniswap_ui_units.h"
 
 // Every guard deciding whether a reply reaches the screen lives here, INSIDE the transition it
 // guards, as a pure function over ScopedState. The backend snapshots, calls one of these, and
@@ -14,7 +13,7 @@ struct Applied {
     QString error;
 };
 
-/// The verdict to publish once eth_rpc_module has stopped answering. Unknown is not
+/// The verdict to publish once uniswap_backend has stopped answering. Unknown is not
 /// "off": it blocks.
 inline QString unknownVerdict(int chainId, const QString &why)
 {
@@ -45,7 +44,7 @@ inline Applied applyBalances(ScopedState &s, const QString &reply)
     return {true, ok ? QString() : refusal(reply, QStringLiteral("balances"))};
 }
 
-/// The wallet's token list for the chain. Unknown, not the previous network's, on a failure.
+/// The tokens offered on the chain. Unknown, not the previous network's, on a failure.
 inline Applied applyTokens(ScopedState &s, const QString &reply)
 {
     const bool ok = replyOk(reply);
@@ -128,101 +127,6 @@ inline void applyQuote(ScopedState &s, const QString &reply, const QString &pric
     }
 }
 
-/// The status of a bundle from the status of its legs. The worst leg wins: a swap whose
-/// approval landed and whose swap reverted is a failed swap, not a half-confirmed one.
-inline QString bundleStatus(const QJsonArray &legs)
-{
-    bool failed = false, pending = false, stalled = false, blocked = false;
-    for (const QJsonValue &v : legs) {
-        const QJsonObject r = v.toObject();
-        const QString st = r.value(QStringLiteral("status")).toString();
-        if (st == QLatin1String("failed"))
-            failed = true;
-        else if (st != QLatin1String("confirmed"))
-            pending = true;
-        if (r.value(QStringLiteral("stalled")).toBool())
-            stalled = true;
-        if (r.value(QStringLiteral("verificationBlocked")).toBool())
-            blocked = true;
-    }
-    if (failed)
-        return QStringLiteral("failed");
-    if (blocked)
-        return QStringLiteral("blocked");
-    if (stalled)
-        return QStringLiteral("stalled");
-    return pending ? QStringLiteral("pending") : QStringLiteral("confirmed");
-}
-
-/// This app's swaps out of the sender's rows: the rows it tagged, grouped by bundle. The tag
-/// is the app's own (`meta.app`), which is enough to find its rows in a list it shares with
-/// the wallet; who really asked is the sender's `origin`, and the rows carry that too.
-inline QJsonArray groupSwaps(const QJsonArray &rows, const QString &app)
-{
-    QList<QJsonObject> groups;
-    for (const QJsonValue &v : rows) {
-        const QJsonObject r = v.toObject();
-        if (r.value(QStringLiteral("meta")).toObject().value(QStringLiteral("app")).toString() != app)
-            continue;
-        QString id = r.value(QStringLiteral("requestId")).toString();
-        if (id.isEmpty())
-            id = r.value(QStringLiteral("hash")).toString();
-        auto it = std::find_if(groups.begin(), groups.end(), [&](const QJsonObject &g) {
-            return g.value(QStringLiteral("requestId")).toString() == id;
-        });
-        if (it == groups.end()) {
-            groups.append(QJsonObject{{QStringLiteral("requestId"), id},
-                                      {QStringLiteral("legs"), QJsonArray{}}});
-            it = groups.end() - 1;
-        }
-        QJsonArray legs = it->value(QStringLiteral("legs")).toArray();
-        legs.append(r);
-        it->insert(QStringLiteral("legs"), legs);
-    }
-    QList<QJsonObject> finished;
-    for (QJsonObject g : groups) {
-        QList<QJsonObject> ordered;
-        for (const QJsonValue &v : g.value(QStringLiteral("legs")).toArray())
-            ordered.append(v.toObject());
-        std::stable_sort(ordered.begin(), ordered.end(), [](const QJsonObject &a, const QJsonObject &b) {
-            return a.value(QStringLiteral("leg")).toInt() < b.value(QStringLiteral("leg")).toInt();
-        });
-        QJsonArray legs, hashes;
-        QJsonObject swapMeta;
-        QString label;
-        double newest = 0;
-        for (const QJsonObject &r : ordered) {
-            legs.append(r);
-            const QString h = r.value(QStringLiteral("hash")).toString();
-            if (!h.isEmpty())
-                hashes.append(h);
-            const QJsonObject meta = r.value(QStringLiteral("meta")).toObject();
-            if (meta.value(QStringLiteral("kind")).toString() == QLatin1String("swap") || swapMeta.isEmpty()) {
-                swapMeta = meta;
-                label = r.value(QStringLiteral("label")).toString();
-            }
-            newest = std::max(newest, r.value(QStringLiteral("timestamp")).toDouble());
-        }
-        g.insert(QStringLiteral("legs"), legs);
-        g.insert(QStringLiteral("hashes"), hashes);
-        g.insert(QStringLiteral("swap"), swapMeta);
-        g.insert(QStringLiteral("label"), label);
-        g.insert(QStringLiteral("timestamp"), newest);
-        g.insert(QStringLiteral("status"), bundleStatus(legs));
-        g.insert(QStringLiteral("origin"), ordered.isEmpty()
-                     ? QString() : ordered.first().value(QStringLiteral("origin")).toString());
-        finished.append(g);
-    }
-    // Newest first, as the wallet's Activity is.
-    std::stable_sort(finished.begin(), finished.end(), [](const QJsonObject &a, const QJsonObject &b) {
-        return a.value(QStringLiteral("timestamp")).toDouble() > b.value(QStringLiteral("timestamp")).toDouble();
-    });
-    QJsonArray result;
-    for (const QJsonObject &g : finished)
-        result.append(g);
-    return result;
-}
-
 /// What a history reply says about the receipt sweep. A read that failed says nothing.
 enum class SweepVerdict { Unchanged, Stop, Run };
 
@@ -231,8 +135,8 @@ struct SwapsApplied {
     SweepVerdict sweep = SweepVerdict::Unchanged;
 };
 
-/// This app's swaps, from the sender's history reply for the selected account and chain.
-inline SwapsApplied applySwaps(ScopedState &s, const QString &reply, const QString &app)
+/// This app's swaps, grouped by uniswap_backend, for the selected account and chain.
+inline SwapsApplied applySwaps(ScopedState &s, const QString &reply)
 {
     if (!answersFor(reply, s.at))
         return {};
@@ -241,7 +145,7 @@ inline SwapsApplied applySwaps(ScopedState &s, const QString &reply, const QStri
         s.swaps.clear();
         return {true, SweepVerdict::Unchanged};
     }
-    s.swaps = toJson(groupSwaps(h.value(QStringLiteral("transactions")).toArray(), app));
+    s.swaps = toJson(h.value(QStringLiteral("swaps")).toArray());
     const bool due = h.value(QStringLiteral("stillDue")).toBool();
     return {true, due ? SweepVerdict::Run : SweepVerdict::Stop};
 }
@@ -299,21 +203,8 @@ inline SendApplied applySend(ScopedState &s, const QString &reply, bool selectio
     return {false, QString(), QString(), true};
 }
 
-/// Only enabled records selected by the device-wide scope are choices for this app.
-inline QJsonArray inScopeNetworks(const QJsonArray &chains)
-{
-    QJsonArray out;
-    for (const QJsonValue &value : chains) {
-        const QJsonObject row = value.toObject();
-        if (row.value(QStringLiteral("enabled")).toBool()
-            && row.value(QStringLiteral("inScope")).toBool())
-            out.append(row);
-    }
-    return out;
-}
-
 /// Keep the UI-local chain while it is offered. Otherwise prefer the first mainnet, then
-/// the first remaining row. eth_rpc supplies a stable mainnet-before-testnet order, but the
+/// the first remaining row. The backend relays eth_rpc's mainnet-before-testnet order, but the
 /// preference is explicit here so this app remains correct for any provider ordering.
 inline int chooseChain(const QJsonArray &chains, int current)
 {
@@ -330,154 +221,19 @@ inline int chooseChain(const QJsonArray &chains, int current)
                             : chains.first().toObject().value(QStringLiteral("chainId")).toInt();
 }
 
-// ── the swap request, from the form to the two modules ─────────────────────────────
+// ── the swap request, as the backend takes it ─────────────────────────────────────
 
-/// The form's request, parsed. Amounts arrive in token units and leave in base units.
-struct SwapForm {
-    QString from;
-    QString tokenIn;
-    QString tokenOut;
-    QString symbolIn;
-    QString symbolOut;
-    int decimalsIn = 18;
-    int decimalsOut = 18;
-    QString amountUnits;
-    QString amountIn;
-    QString tier = QStringLiteral("normal");
-    int slippageBps = 50;
-    int deadlineMins = 30;
-    QString recipient;
-};
-
-/// Empty error on success. A form that is not an amount is refused HERE, in words the user
-/// can act on, rather than sent on as zero.
-inline QString parseSwapForm(const QString &requestJson, SwapForm *out)
+/// The form's request on the chain on screen: the backend reads the form's own fields.
+inline QString withChain(const QString &requestJson, int chainId)
 {
-    const QJsonObject r = parseObject(requestJson);
-    out->from = r.value(QStringLiteral("from")).toString();
-    out->tokenIn = r.value(QStringLiteral("tokenIn")).toString().trimmed();
-    out->tokenOut = r.value(QStringLiteral("tokenOut")).toString().trimmed();
-    out->symbolIn = r.value(QStringLiteral("symbolIn")).toString();
-    out->symbolOut = r.value(QStringLiteral("symbolOut")).toString();
-    out->decimalsIn = r.value(QStringLiteral("decimalsIn")).toInt(18);
-    out->decimalsOut = r.value(QStringLiteral("decimalsOut")).toInt(18);
-    out->amountUnits = r.value(QStringLiteral("amountUnits")).toString().trimmed();
-    out->tier = r.value(QStringLiteral("tier")).toString(QStringLiteral("normal"));
-    out->slippageBps = r.value(QStringLiteral("slippageBps")).toInt(50);
-    out->deadlineMins = r.value(QStringLiteral("deadlineMins")).toInt(30);
-    out->recipient = r.value(QStringLiteral("recipient")).toString().trimmed();
-    if (out->from.isEmpty())
-        return QStringLiteral("no account is selected");
-    out->amountIn = toBaseUnits(out->amountUnits, out->decimalsIn);
-    if (out->amountIn.isEmpty())
-        return QStringLiteral("the amount must be a number with at most %1 decimal places")
-            .arg(out->decimalsIn);
-    if (out->slippageBps < 0 || out->slippageBps > 5000)
-        return QStringLiteral("slippage must be between 0 and 5000 basis points");
-    return {};
-}
-
-/// What uniswap_module is asked. `owner` makes the batch read the balance and allowance.
-inline QString swapModuleRequest(const SwapForm &f, qint64 deadlineUnix)
-{
-    QJsonObject o{
-        {QStringLiteral("tokenIn"), f.tokenIn},
-        {QStringLiteral("tokenOut"), f.tokenOut},
-        {QStringLiteral("amountIn"), f.amountIn},
-        {QStringLiteral("owner"), f.from},
-        {QStringLiteral("symbolIn"), f.symbolIn},
-        {QStringLiteral("symbolOut"), f.symbolOut},
-        {QStringLiteral("slippageBps"), f.slippageBps},
-    };
-    if (!f.recipient.isEmpty())
-        o.insert(QStringLiteral("recipient"), f.recipient);
-    if (deadlineUnix > 0)
-        o.insert(QStringLiteral("deadline"), static_cast<double>(deadlineUnix));
+    QJsonObject o = parseObject(requestJson);
+    o.insert(QStringLiteral("chainId"), chainId);
     return toJson(o);
 }
 
-/// The sender's request for a built swap. No leg carries a gas limit: `fee_module` estimates
-/// the swap behind its approval with that allowance applied, and a limit this app invented
-/// would only stand in the way of a real one.
-inline QString senderRequest(const QJsonObject &built, const SwapForm &f, const QString &app,
-                             const QString &purpose, int chainId)
+/// An amount of nothing ("", "0", "0.00", ".") is nothing to price, and not an error either.
+inline bool isNothing(const QString &requestJson)
 {
-    QJsonArray calls;
-    const QJsonObject route = built.value(QStringLiteral("route")).toObject();
-    for (const QJsonValue &v : built.value(QStringLiteral("calls")).toArray()) {
-        const QJsonObject c = v.toObject();
-        const QString kind = c.value(QStringLiteral("kind")).toString();
-        QJsonObject meta{
-            {QStringLiteral("app"), app},
-            {QStringLiteral("kind"), kind},
-            {QStringLiteral("tokenIn"), f.tokenIn},
-            {QStringLiteral("tokenOut"), f.tokenOut},
-            {QStringLiteral("symbolIn"), f.symbolIn},
-            {QStringLiteral("symbolOut"), f.symbolOut},
-            {QStringLiteral("decimalsIn"), f.decimalsIn},
-            {QStringLiteral("decimalsOut"), f.decimalsOut},
-            {QStringLiteral("amountIn"), f.amountIn},
-            {QStringLiteral("amountOut"), built.value(QStringLiteral("amountOut")).toString()},
-            {QStringLiteral("amountOutMin"), built.value(QStringLiteral("amountOutMin")).toString()},
-            {QStringLiteral("route"), route},
-        };
-        QJsonObject call{
-            {QStringLiteral("to"), c.value(QStringLiteral("to")).toString()},
-            {QStringLiteral("value"), c.value(QStringLiteral("value")).toString()},
-            {QStringLiteral("data"), c.value(QStringLiteral("data")).toString()},
-            {QStringLiteral("label"), c.value(QStringLiteral("label")).toString()},
-            {QStringLiteral("meta"), meta},
-        };
-        calls.append(call);
-    }
-    QJsonObject o{
-        {QStringLiteral("chainId"), chainId},
-        {QStringLiteral("from"), f.from},
-        {QStringLiteral("purpose"), purpose},
-        {QStringLiteral("calls"), calls},
-        {QStringLiteral("tier"), f.tier},
-    };
-    return toJson(o);
-}
-
-/// The sentence the keystore shows the human, and the sender records: what leaves, what at
-/// least comes back, and where. Every digit: it is a claim the human is asked to approve,
-/// and "<0.00001" is not a claim.
-inline QString swapPurpose(const SwapForm &f, const QJsonObject &built)
-{
-    const QString in = fromBaseUnitsExact(f.amountIn, f.decimalsIn);
-    const QString minOut = fromBaseUnitsExact(built.value(QStringLiteral("amountOutMin")).toString(), f.decimalsOut);
-    return QStringLiteral("Swap %1 %2 for at least %3 %4 on Uniswap")
-        .arg(in, f.symbolIn.isEmpty() ? f.tokenIn : f.symbolIn, minOut,
-             f.symbolOut.isEmpty() ? f.tokenOut : f.symbolOut);
-}
-
-/// The quote the view renders: the built swap, the sender's pricing of it under `fee`, and
-/// the display strings the view would otherwise have to derive from base units. `from` is
-/// stamped so the reply names the account it is about, as every scoped reply must.
-inline QString mergedQuote(const QJsonObject &built, const QString &feeReply, const SwapForm &f)
-{
-    QJsonObject q = built;
-    q.insert(QStringLiteral("from"), f.from);
-    q.insert(QStringLiteral("amountInDisplay"), fromBaseUnits(f.amountIn, f.decimalsIn));
-    const QString out = built.value(QStringLiteral("amountOut")).toString();
-    const QString minOut = built.value(QStringLiteral("amountOutMin")).toString();
-    q.insert(QStringLiteral("amountOutDisplay"), fromBaseUnits(out, f.decimalsOut));
-    q.insert(QStringLiteral("amountOutExact"), fromBaseUnitsExact(out, f.decimalsOut));
-    q.insert(QStringLiteral("amountOutMinDisplay"), fromBaseUnits(minOut, f.decimalsOut));
-    q.insert(QStringLiteral("amountOutMinExact"), fromBaseUnitsExact(minOut, f.decimalsOut));
-    q.insert(QStringLiteral("rate"), rateOf(f.amountIn, f.decimalsIn, out, f.decimalsOut));
-    q.insert(QStringLiteral("rateInverse"), rateOf(out, f.decimalsOut, f.amountIn, f.decimalsIn));
-    const QString balance = built.value(QStringLiteral("balanceIn")).toString();
-    if (isDigits(balance)) {
-        q.insert(QStringLiteral("balanceInDisplay"), fromBaseUnits(balance, f.decimalsIn));
-        q.insert(QStringLiteral("insufficientBalance"), compareBase(balance, f.amountIn) < 0);
-    }
-    const QJsonObject fee = parseObject(feeReply);
-    if (fee.isEmpty())
-        q.insert(QStringLiteral("fee"), QJsonObject{{QStringLiteral("ok"), false},
-                                                    {QStringLiteral("error"), QStringLiteral("the sender did not answer")}});
-    else
-        q.insert(QStringLiteral("fee"), fee);
-    return toJson(q);
+    const QString a = parseObject(requestJson).value(QStringLiteral("amountUnits")).toString().trimmed();
+    return std::all_of(a.begin(), a.end(), [](QChar c) { return c == QLatin1Char('0') || c == QLatin1Char('.'); });
 }

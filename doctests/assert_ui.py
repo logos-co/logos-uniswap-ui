@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Source assertions for uniswap_ui: the claims a file can answer for, with no app.
 
-Everything here is a grep with a reason. The rules a table can RUN live in test_apply.cpp
-and test_units.cpp; the bindings live in the probes. What is left for a grep is what neither
-can see, asserted as an ABSENCE where possible: no password anywhere on the contract, no
-backend-authored string rendered as markup, no scoped setter outside publishScope.
+Everything here is a grep with a reason. The rules a table can RUN live in test_apply.cpp;
+the bindings live in the probes. What is left for a grep is what neither can see, asserted
+as an ABSENCE where possible: no password anywhere on the contract, no backend-authored
+string rendered as markup, no scoped setter outside publishScope.
 """
 import re
 import sys
@@ -70,22 +70,21 @@ check("...and publishScope writes all twelve", sorted(set(inside)), sorted({
 
 print("0c. every module call is bounded")
 async_calls = re.findall(r"AsyncResult\(", CPP)
-timeouts = re.findall(r"Timeout\(kCallBudgetMs\)", CPP)
-check("every AsyncResult call carries the budget", len(async_calls), len(timeouts))
-check("...and there are calls to bound", len(async_calls) >= 10)
+timeouts = re.findall(r"Timeout\(k(?:Call|SwapCall)BudgetMs\)", CPP)
+check("every AsyncResult call carries a budget", len(async_calls), len(timeouts))
+check("...and there are calls to bound", len(async_calls) >= 8)
+check("a quote and a swap wait for the backend's whole allowance",
+      len(re.findall(r"Timeout\(kSwapCallBudgetMs\)", CPP)), 2)
 sync_calls = re.findall(r"modules\(\)\.[a-z_]+\.([a-z_]+)\(", CPP)
 check("the synchronous calls are the cheap reads and the cancel alone",
-      sorted(set(sync_calls) - {"on" + n for n in []}),
-      sorted({"list_chain_configs", "list_offered", "list_accounts", "get_labels",
-              "get_account_wallets", "cancel_send"}))
+      sorted(set(sync_calls)), sorted({"networks", "tokens", "accounts", "cancel_swap"}))
 
-print("0d. this dapp composes reusable modules, never the wallet backend")
-check("the wallet backend is not a dependency", "eth_wallet_backend" not in DEPS)
-check("...and the check reads real names", "uniswap_module" in DEPS)
-check("...or a client used by the backend", "eth_wallet_backend" not in CPP)
-keystore_calls = sorted(set(re.findall(r"keystore_module\.([A-Za-z_]+)\(", CPP)))
-check("the keystore client is read-only and subscribes only to account changes", keystore_calls,
-      sorted({"list_accounts", "get_labels", "get_account_wallets", "onAccounts_changed"}))
+print("0d. this view has one dependency, its backend")
+check("uniswap_backend is the only dependency", DEPS, ["uniswap_backend"])
+check("...and the only client the view's C++ calls", sorted(set(re.findall(r"modules\(\)\.([a-z_]+)\.", CPP))),
+      ["uniswap_backend"])
+check("...so no module the backend composes is reached around it",
+      re.search(r"keystore_module|tx_sender_module|uniswap_module|eth_wallet_backend", CPP + HDR) is None)
 check("the chain selector is part of the contract and view",
       "selectNetwork(int chainId)" in REP and 'objectName: "chainPicker"' in QML)
 check("the chain selector follows both halves of backend initialization",

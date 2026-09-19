@@ -17,7 +17,6 @@ logos_module(
         src/uniswap_ui_apply.h
         src/uniswap_ui_guard.h
         src/uniswap_ui_scope.h
-        src/uniswap_ui_units.h
     INCLUDE_DIRS
         src
 )

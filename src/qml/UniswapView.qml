@@ -366,6 +366,14 @@ Item {
         if (s === "stalled" || s === "blocked") return Theme.palette.warning
         return Theme.palette.textSecondary
     }
+    // Who asked for a swap: the module that asked the backend, then the backend itself, which
+    // is what the sender attests. A row recorded before the backend existed has no `via`.
+    function askedBy(b) {
+        var origin = b && b.origin !== undefined ? String(b.origin) : ""
+        var via = b && b.via !== undefined ? String(b.via) : ""
+        if (via.length && origin.length) return via + ", through " + origin
+        return origin.length ? origin : "—"
+    }
     function swapTitle(b) {
         var m = b && b.swap ? b.swap : ({})
         if (m.amountIn !== undefined && m.symbolIn !== undefined && m.symbolOut !== undefined)
@@ -1374,8 +1382,7 @@ Item {
                             DetailRow {
                                 objectName: "swapDetailOrigin"
                                 label: "Asked by"
-                                value: swapDetail.bundle.origin !== undefined && String(swapDetail.bundle.origin).length
-                                       ? String(swapDetail.bundle.origin) : "—"
+                                value: root.askedBy(swapDetail.bundle)
                             }
                         }
                     }
