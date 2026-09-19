@@ -63,10 +63,10 @@ Item {
     // Codes that mean the intent path is CLOSED and no human is looking at the record; the
     // wallet's rule, verbatim, for the reasons written beside it there. `unavailable` is NOT
     // on the list: the signer may be openable by hand, and withdrawing there would delete the
-    // record the user was just told to go and approve.
+    // record the user was just told to go and approve. Nor is `cancelled`, which is not final:
+    // Back and a newer request leave the record approvable, and a Reject settles by status.
     function intentPathIsClosed(error) {
-        return error === "bad_request" || error === "not_declared"
-            || error === "timeout" || error === "cancelled"
+        return error === "bad_request" || error === "not_declared" || error === "timeout"
     }
 
     // Point a signer at the swap now waiting on a human. The result is ADVISORY: the sender's
@@ -76,8 +76,9 @@ Item {
         if (handle === "") return
         root.approvalNote = ""
         logos.request("evm.signing.approve", ({ handle: handle }), function (res) {
-            if (res.ok) return
-            if (res.error === "cancelled") { root.backend.cancelSwap(); return }
+            // An answer about a swap that is no longer the pending one moves nothing.
+            if (!root.ready || root.backend.pendingApprovalHandle !== handle) return
+            if (res.ok || res.error === "cancelled") return
             root.approvalNote = res.error === "unavailable"
                 ? "Approve this swap in the Signer app to send it."
                 : "Could not reach a signer (" + res.error + ")."

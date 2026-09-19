@@ -137,14 +137,27 @@ Item {
             check("...the dialog now carries it", probe.inDialog("pendingDialog", "pendingLabel").text, probe.oldSignerText)
             fake.pendingApprovalHandle = ""; fake.pendingApprovalHandle = probe.handle
             probe.answer({ ok: false, error: "cancelled" })
-            check("cancelled: the user declined to route it, so the record is withdrawn", probe.cancels, 1)
+            check("cancelled is not final (Back, a newer request, Reject): nothing is withdrawn", probe.cancels, 0)
+            check("...and the dialog keeps waiting", probe.inDialog("pendingDialog", "pendingLabel").text, "Waiting for this swap to be approved.")
+            fake.pendingApprovalHandle = ""
             fake.pendingRequestId = "snd_2"; fake.pendingApprovalHandle = probe.handle
             probe.answer({ ok: false, error: "timeout" })
-            check("timeout: the path is closed, the record is withdrawn", probe.cancels, 2)
+            check("timeout: the path is closed, the record is withdrawn", probe.cancels, 1)
             check("...and the note says what happened", v.approvalNote, "Could not reach a signer (timeout).")
             fake.pendingRequestId = "snd_3"; fake.pendingApprovalHandle = probe.handle
             probe.answer({ ok: false, error: "bad_request" })
-            check("bad_request too", probe.cancels, 3)
+            check("bad_request too", probe.cancels, 2)
+
+            console.log("")
+            console.log("an answer about a swap that is no longer the pending one moves nothing")
+            fake.pendingRequestId = "snd_4"; fake.pendingApprovalHandle = "ksh_earlier"
+            var late = probe.reply
+            fake.pendingApprovalHandle = ""; fake.pendingRequestId = "snd_5"; fake.pendingApprovalHandle = probe.handle
+            late({ ok: false, error: "timeout" })
+            check("a late timeout for the earlier swap withdraws nothing", probe.cancels, 2)
+            check("...this one is still pending", fake.pendingRequestId, "snd_5")
+            check("...and its note is not written over", v.approvalNote, "")
+            probe.answer({ ok: true }); fake.pendingApprovalHandle = ""; fake.pendingRequestId = ""
 
             console.log("")
             console.log("the hand-offs: Accounts and Token lists name a capability, and nobody may hold it")
