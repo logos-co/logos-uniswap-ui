@@ -124,4 +124,16 @@ jobs:
           n=$(grep -c "RESULT: ALL PASS" /tmp/tables.log)
           echo "sections that reported: $n"; [ "$n" -ge 3 ]
           n=$(grep -c "  PASS  " /tmp/tables.log)
-          echo "assertions: $n"; [ "$n" -ge 120 ]
+          echo "assertions: $n"; [ "$n" -ge 150 ]
+
+  kit:
+    name: src/qml/kit is logos-evm-tx-kit as pinned
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: scripts/check.sh at the pinned commit
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/logos-co/logos-evm-tx-kit "$RUNNER_TEMP/kit"
+          git -C "$RUNNER_TEMP/kit" checkout -q "$(cat src/qml/kit/VERSION)"
+          "$RUNNER_TEMP/kit/scripts/check.sh" .

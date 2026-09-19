@@ -4,6 +4,7 @@ import QtQuick.Layouts 1.15
 import Logos.Controls
 import Logos.Icons
 import Logos.Theme
+import "kit" as Kit
 
 // The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
 // everything else under the two cards, and this app's network visible at all times. The
@@ -803,7 +804,11 @@ Item {
                         property string picking: "sell"
                         // The 5% acknowledgement, per quote: it is reset when the figures move.
                         property bool impactAcknowledged: false
-                        property string tier: "normal"
+                        property alias tier: tierGroup.tier
+                        // The last priced swap's calls. Read off each quote, a re-price in flight
+                        // would reset them, and with them the Advanced fields set for the calls.
+                        property int calls: 1
+                        property var callLabels: []
 
                         function selectToken(side, t) {
                             if (side === "sell") swapPage.sell = t
@@ -863,9 +868,21 @@ Item {
                                         slippageBps: root.slippageBps,
                                         deadlineMins: root.deadlineMins
                                     }
+                                    var o = advanced.overrides
+                                    if (o.maxFeePerGas !== undefined) {
+                                        r.maxFeePerGas = o.maxFeePerGas
+                                        r.maxPriorityFeePerGas = o.maxPriorityFeePerGas
+                                    }
+                                    if (o.gasLimits !== undefined) r.gasLimits = o.gasLimits
+                                    if (o.nonce !== undefined) r.nonce = o.nonce
                                     return JSON.stringify(r)
                                 }
                                 readonly property string formRequest: request()
+                                onQChanged: {
+                                    if (q.ok !== true || q.calls === undefined) return
+                                    swapPage.calls = Math.max(1, q.calls.length)
+                                    swapPage.callLabels = q.calls.map(function (c) { return c.label || c.kind || "" })
+                                }
                                 readonly property var q: root.quoteRequest.length > 0
                                                          && root.quoteRequest === swapForm.formRequest
                                                          ? root.quote : ({})
@@ -967,34 +984,13 @@ Item {
                                                ? "Reset and approve " + swapPage.sellSymbol + " first"
                                                : "Approve " + swapPage.sellSymbol + " first"
                                     }
-                                    // "at most", never "the fee": a ceiling the user is not charged.
-                                    DetailRow {
-                                        objectName: "feeRow"
-                                        label: "Network fee"
-                                        value: swapForm.q.fee !== undefined && swapForm.q.fee.feeCeilingWeiDisplay !== undefined
-                                               ? "at most " + swapForm.q.fee.feeCeilingWeiDisplay + " "
-                                                 + (swapForm.q.fee.nativeSymbol || root.nativeSymbol)
-                                                 + " (" + swapPage.tier + ")"
-                                               : "—"
-                                    }
-                                    LogosText {
-                                        objectName: "feeErrorLabel"
-                                        visible: swapForm.q.fee !== undefined && swapForm.q.fee.ok !== true
-                                        Layout.fillWidth: true
-                                        textFormat: Text.PlainText
-                                        wrapMode: Text.WordWrap
-                                        color: Theme.palette.error
-                                        text: swapForm.q.fee !== undefined && swapForm.q.fee.error !== undefined
-                                              ? "Fee: " + swapForm.q.fee.error : ""
-                                    }
-                                    LogosText {
-                                        objectName: "feeSourceLabel"
-                                        visible: text.length > 0
-                                        textFormat: Text.PlainText
-                                        color: Theme.palette.textSecondary
-                                        font.pixelSize: Theme.typography.secondaryText
-                                        text: swapForm.q.fee !== undefined && swapForm.q.fee.feeSource !== undefined
-                                              ? "Fee basis: " + swapForm.q.fee.feeSource : ""
+                                    // What the sender priced: the ceiling, each call's gas, the fees and nonces.
+                                    Kit.TxFeeSummary {
+                                        objectName: "swapFeeSummary"
+                                        quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                        tier: swapPage.tier
+                                        calls: swapPage.calls
+                                        nativeSymbol: root.nativeSymbol
                                     }
                                     LogosText {
                                         objectName: "quoteRouteNote"
@@ -1007,30 +1003,13 @@ Item {
                                     }
                                 }
 
-                                // Fee tiers, as the wallet's Send page names them.
-                                RowLayout {
-                                    id: tierGroup
-                                    spacing: Theme.spacing.tiny
-                                    LogosText {
-                                        text: "Fee"
-                                        color: Theme.palette.textSecondary
-                                        font.pixelSize: Theme.typography.secondaryText
-                                    }
-                                    LogosButton {
-                                        objectName: "tierSlow"; text: "Low"
-                                        variant: swapPage.tier === "slow" ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
-                                        onClicked: swapPage.tier = "slow"
-                                    }
-                                    LogosButton {
-                                        objectName: "tierNormal"; text: "Market"
-                                        variant: swapPage.tier === "normal" ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
-                                        onClicked: swapPage.tier = "normal"
-                                    }
-                                    LogosButton {
-                                        objectName: "tierFast"; text: "Fast"
-                                        variant: swapPage.tier === "fast" ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
-                                        onClicked: swapPage.tier = "fast"
-                                    }
+                                // Fee tiers and the Advanced fields, one implementation with the wallet's.
+                                Kit.FeeTierPicker { id: tierGroup; label: "Fee" }
+                                Kit.TxAdvancedFields {
+                                    id: advanced
+                                    quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                    calls: swapPage.calls
+                                    callLabels: swapPage.callLabels
                                 }
 
                                 LogosText {
@@ -1092,7 +1071,7 @@ Item {
                                         variant: LogosButton.Variant.Primary
                                         text: root.swapButtonText(swapForm.state)
                                         enabled: root.ready && !root.swapSubmitting
-                                                 && swapForm.state === "ready"
+                                                 && swapForm.state === "ready" && advanced.error.length === 0
                                         onClicked: reviewDialog.open()
                                     }
                                 }
@@ -1552,101 +1531,32 @@ Item {
     }
 
     // ── review, before anything is asked of the sender ───────────────────────────
-    LogosDialog {
+    Kit.TxReviewDialog {
         id: reviewDialog
         objectName: "reviewDialog"
         title: "Review swap"
-        anchors.centerIn: parent
-        width: 460
-        readonly property var q: swapForm.q
-        contentItem: ColumnLayout {
-            spacing: Theme.spacing.small
-            DetailRow {
-                objectName: "reviewPay"
-                label: "You pay"
-                value: (reviewDialog.q.amountInDisplay || "—") + " " + swapPage.sellSymbol
-            }
-            DetailRow {
-                objectName: "reviewReceive"
-                label: "You receive"
-                value: (reviewDialog.q.amountOutDisplay || "—") + " " + swapPage.buySymbol
-            }
-            DetailRow {
-                objectName: "reviewMin"
-                label: "At least"
-                value: (reviewDialog.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
-            }
-            DetailRow {
-                objectName: "reviewImpact"
-                label: "Price impact"
-                value: root.impactText(reviewDialog.q.priceImpactBps)
-            }
-            DetailRow {
-                objectName: "reviewFee"
-                label: "Network fee"
-                value: reviewDialog.q.fee !== undefined && reviewDialog.q.fee.feeCeilingWeiDisplay !== undefined
-                       ? "at most " + reviewDialog.q.fee.feeCeilingWeiDisplay + " "
-                         + (reviewDialog.q.fee.nativeSymbol || root.nativeSymbol) : "—"
-            }
-            LogosText {
-                text: "Transactions to approve"
-                color: Theme.palette.textSecondary
-                font.pixelSize: Theme.typography.secondaryText
-            }
-            Repeater {
-                model: reviewDialog.q.calls !== undefined ? reviewDialog.q.calls : []
-                LogosText {
-                    objectName: "reviewCall_" + index
-                    Layout.fillWidth: true
-                    textFormat: Text.PlainText
-                    wrapMode: Text.WordWrap
-                    text: (index + 1) + ". " + (modelData.label || modelData.kind) + " · " + root.shortAddr(modelData.to)
-                }
-            }
-            LogosText {
-                objectName: "reviewNote"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                color: Theme.palette.textSecondary
-                font.pixelSize: Theme.typography.secondaryText
-                text: "The signer asks once for all of them. Nothing is sent until it says yes."
-            }
-            LogosText {
-                objectName: "reviewError"
-                visible: root.ready && root.backend.swapError.length > 0
-                Layout.fillWidth: true
-                textFormat: Text.PlainText
-                wrapMode: Text.WordWrap
-                color: Theme.palette.error
-                text: root.ready ? root.backend.swapError : ""
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                LogosButton {
-                    objectName: "reviewCancel"
-                    text: "Back"
-                    onClicked: reviewDialog.close()
-                }
-                Item { Layout.fillWidth: true }
-                LogosSpinner {
-                    implicitWidth: 18
-                    implicitHeight: 18
-                    visible: root.swapSubmitting
-                    running: visible
-                    ringColor: Theme.palette.textSecondary
-                }
-                LogosButton {
-                    objectName: "reviewConfirm"
-                    variant: LogosButton.Variant.Primary
-                    text: "Confirm swap"
-                    enabled: root.ready && !root.swapSubmitting && !root.swapPending
-                    onClicked: {
-                        root.swapSubmitting = true
-                        root.backend.submitSwap(swapForm.formRequest)
-                    }
-                }
-            }
+        prefix: "review"
+        readonly property var sq: swapForm.q
+        quote: sq.fee !== undefined ? sq.fee : ({})
+        tier: swapPage.tier
+        nativeSymbol: root.nativeSymbol
+        rows: [
+            { name: "reviewPay", label: "You pay", value: (sq.amountInDisplay || "—") + " " + swapPage.sellSymbol },
+            { name: "reviewReceive", label: "You receive", value: (sq.amountOutDisplay || "—") + " " + swapPage.buySymbol },
+            { name: "reviewMin", label: "At least", value: (sq.amountOutMinDisplay || "—") + " " + swapPage.buySymbol },
+            { name: "reviewImpact", label: "Price impact", value: root.impactText(sq.priceImpactBps) }
+        ]
+        callList: sq.calls !== undefined ? sq.calls : []
+        nameOf: root.shortAddr
+        error: root.ready ? root.backend.swapError : ""
+        confirmText: "Confirm swap"
+        busy: root.swapSubmitting
+        confirmEnabled: root.ready && !root.swapSubmitting && !root.swapPending
+        onConfirmed: {
+            root.swapSubmitting = true
+            root.backend.submitSwap(swapForm.formRequest)
         }
+        onCancelled: close()
     }
 
     // ── pending approval ─────────────────────────────────────────────────────────

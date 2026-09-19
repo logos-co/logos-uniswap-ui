@@ -46,7 +46,9 @@ check("the only intents are the three declared",
 print("0a. backend-authored strings are rendered as plain text")
 # Every LogosText whose text reads a backend property or a module reply carries PlainText.
 # Judged on the `text:` expression alone: a `visible:` that reads a reply renders nothing.
-blocks = re.findall(r"LogosText \{(.*?)\n\s*\}", QML, re.S)
+# The vendored kit renders the sender's figures too, so its files are read with the view.
+KIT = "".join(f.read_text() for f in sorted((SRC / "qml" / "kit").glob("*.qml")))
+blocks = re.findall(r"LogosText \{(.*?)\n\s*\}", QML + KIT, re.S)
 def text_expr(block):
     m = re.search(r"\n\s*text: (.*?)(?=\n\s*[a-zA-Z.]+: |\n\s*\}|$)", block, re.S)
     return m.group(1) if m else ""
