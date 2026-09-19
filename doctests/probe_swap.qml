@@ -169,6 +169,17 @@ Item {
             check("and a later chain publication stays synchronized", picker.currentIndex, 0)
 
             console.log("")
+            console.log("a blocking verdict says what to do, for every action eth_rpc sends")
+            var actions = ["wait", "install_or_load", "open_verified_proxy", "restart_or_reload"]
+            for (var ai = 0; ai < actions.length; ++ai) {
+                fake.verifiedProxyJson = JSON.stringify({ ok: true, chainId: 11155111, mode: "required",
+                                                          blocking: true, action: actions[ai], message: "blocked" })
+                check(actions[ai] + " has a hint", probe.node("verifiedBannerAction").text !== "", true)
+            }
+            fake.verifiedProxyJson = JSON.stringify({ ok: true, chainId: 11155111, mode: "off" })
+            check("...and the banner goes when the verdict stops blocking", probe.node("verifiedBanner").visible, false)
+
+            console.log("")
             console.log("the button says what is missing, in Uniswap's own order")
             var page = probe.find(v, "swapPage")
             check("the network coin is seeded as the sell side", page.sellSymbol, "ETH")
