@@ -156,6 +156,11 @@ sections:
               find_value: "verifiedBanner"
               property: "visible"
               value: true
+            - name: "...saying what to do about it"
+              action: expect_property
+              find_value: "verifiedBannerAction"
+              property: "text"
+              value: "Install and start the Verified Proxy module, then reopen this app."
             - name: "The network selector defaults to Ethereum, which only a wired chain registry can do"
               action: expect_property
               find_value: "chainPicker"

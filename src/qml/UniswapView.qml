@@ -352,11 +352,12 @@ Item {
         return s === "verified" ? Theme.palette.success
              : s === "unknown" ? Theme.palette.warning : Theme.palette.textSecondary
     }
+    // eth_rpc's closed action set, word for word: an unknown word renders no hint at all.
     function actionHint(a) {
-        if (a === "install") return "Install the verified proxy, or turn verification off in the wallet's Networks screen."
-        if (a === "start") return "Start the verified proxy."
         if (a === "wait") return "The proxy is catching up. Figures return when it has."
-        if (a === "restart_or_reload") return "Restart the proxy, or reload this app."
+        if (a === "install_or_load") return "Install and start the Verified Proxy module, then reopen this app."
+        if (a === "open_verified_proxy") return "Open Verified Proxy and press Start."
+        if (a === "restart_or_reload") return "Open Verified Proxy, press Stop then Start. If that does not help, reload the app."
         return ""
     }
     function statusText(s) { return s || "—" }
