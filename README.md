@@ -63,7 +63,15 @@ rate line, which is a display of a ratio and says so.
 The network fee is shown as **"at most"**: `maxFeePerGas × gasLimit` is a ceiling the user
 is not charged. Every leg's limit is `fee_module`'s estimate, the swap behind its approval
 estimated with that allowance applied; `uniswap_module`'s `gasLimitHint` is not sent, so the
-figure the user reads is the chain's, not this app's guess.
+figure the user reads is the chain's, not this app's guess. Beside it: each call's gas limit,
+the max and priority fee in gwei, and the nonces the calls take.
+
+The fee tiers, those figures, the Advanced section and the review are the wallet's own, from
+[logos-evm-tx-kit](https://github.com/logos-co/logos-evm-tx-kit), vendored in `src/qml/kit`
+and checked in CI against the commit in `src/qml/kit/VERSION`. Advanced sets the max and
+priority fee (both travel together), a gas limit per call, and a nonce for a one-transaction
+swap; a swap with an approval shows its two nonces read-only, since a nonce replaces one
+pending transaction.
 
 **Price impact** is the shortfall of the quoted rate against the rate a thousandth of the
 amount fetches on the same route. Uniswap's own thresholds: a warning colour from 3%, and

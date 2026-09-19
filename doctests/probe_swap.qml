@@ -128,7 +128,10 @@ Item {
             needsApproval: true, approval: "set",
             calls: [{ kind: "approve", to: probe.usdc, label: "Approve USDC for Uniswap" },
                     { kind: "swap", to: probe.router, label: "Swap USDC for ETH on Uniswap V3" }],
-            fee: { ok: true, feeCeilingWeiDisplay: "0.0004", nativeSymbol: "ETH", feeSource: "eip1559", nonce: 7 }
+            fee: { ok: true, feeCeilingWeiDisplay: "0.0004", nativeSymbol: "ETH", feeSource: "eip1559", nonce: 7,
+                   maxFeePerGas: "1700000000", maxPriorityFeePerGas: "169400000", gasLimit: 226000,
+                   legs: [{ gasLimit: 46000, label: "Approve USDC for Uniswap" },
+                          { gasLimit: 180000, label: "Swap USDC for ETH on Uniswap V3" }] }
         }
         for (var k in extra) q[k] = extra[k]
         fake.quoteJson = JSON.stringify(q)
@@ -215,9 +218,33 @@ Item {
             check("the route", probe.node("routeRow").value, "Uniswap V3 0.05%")
             check("the pool fee", probe.node("feeTierRow").value, "0.05%")
             check("the approval, said before it is asked", probe.node("approvalRow").value, "Approve USDC first")
-            check("the fee is a ceiling, never a price", probe.node("feeRow").value, "at most 0.0004 ETH (normal)")
+            check("the fee is a ceiling, never a price", probe.node("feeRow").value, "at most 0.0004 ETH (Market)")
             check("and the button offers the swap on the named network", probe.node("swapButton").text, "Swap on Sepolia (testnet)")
             check("...enabled", probe.node("swapButton").enabled, true)
+
+            console.log("")
+            console.log("the sender's figures, as the wallet shows them: each call's gas and nonce")
+            check("each call's gas limit", probe.node("gasLimitRow").value, "46000 + 180000")
+            check("the max fee, in gwei", probe.node("maxFeeRow").value, "1.7 gwei")
+            check("the nonces the two calls take", probe.node("nonceRow").value, "7, 8")
+            console.log("")
+            console.log("and the Advanced section this app did not have")
+            probe.node("advancedToggle").checked = true
+            check("a gas limit per call, named for it", probe.node("gasLimitField_1").placeholderText,
+                  "Swap USDC for ETH on Uniswap V3: gas limit (estimated 180000)")
+            check("two transactions cannot be pinned to one nonce", probe.node("nonceField").readOnly, true)
+            probe.node("gasLimitField_1").text = "250000"
+            probe.node("maxPriorityFeeField").text = "2000000000"
+            var custom = JSON.parse(probe.quoted[probe.quoted.length - 1])
+            check("the swap's own limit goes out, the approval's left estimated", JSON.stringify(custom.gasLimits),
+                  JSON.stringify([null, "250000"]))
+            check("the tip as typed, with the max fee the quote suggested", custom.maxPriorityFeePerGas + " / " + custom.maxFeePerGas,
+                  "2000000000 / 1700000000")
+            check("and no nonce", custom.nonce, undefined)
+            probe.node("gasLimitField_1").text = ""
+            probe.node("maxPriorityFeeField").text = ""
+            probe.node("advancedToggle").checked = false
+            probe.publishQuote({})
 
             console.log("")
             console.log("the figures are withdrawn the moment the form changes")
