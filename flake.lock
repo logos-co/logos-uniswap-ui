@@ -203,11 +203,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789773624,
+        "lastModified": 1789775510,
         "narHash": "sha256-WuVHCyOad6xltRZPXUxBw3RA/0ozbwHVvpd+vEzZYAQ=",
         "owner": "logos-co",
         "repo": "logos-evm-assets-module",
-        "rev": "e1d719e68c407710fe31596fdc8b4e56a363b1e6",
+        "rev": "d06690cebbbb73ccb067d6a5612b62d544797a86",
         "type": "github"
       },
       "original": {
@@ -16974,11 +16974,11 @@
         "uniswap_module": "uniswap_module"
       },
       "locked": {
-        "lastModified": 1789774527,
-        "narHash": "sha256-WaON4p16Z4qkKk2G5kB5vSQ3DBPE6io5B3UqqSZGFn4=",
+        "lastModified": 1789778758,
+        "narHash": "sha256-esYQfZUGGIts8OrlsLS6gcANalU5pjXrX23LXYZ3qik=",
         "owner": "logos-co",
         "repo": "logos-uniswap-backend",
-        "rev": "fc9c62535b5397e1584296437a9bb5483edc0011",
+        "rev": "184ddf902b530e6673c53ebcfbcdd984d3ebfbe5",
         "type": "github"
       },
       "original": {
@@ -16999,11 +16999,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789773646,
+        "lastModified": 1789777309,
         "narHash": "sha256-A1i0IUVAU2mCucX0fZa6U5fpIryffwqU3UneDjBr0bM=",
         "owner": "logos-co",
         "repo": "logos-evm-uniswap-module",
-        "rev": "47417e62d5bc9c1be31569750fd9a5e9b57e32d0",
+        "rev": "e9fef0ac9cad3948f1eb7e77975157cfc91ddc7b",
         "type": "github"
       },
       "original": {
