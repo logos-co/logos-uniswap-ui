@@ -16974,11 +16974,11 @@
         "uniswap_module": "uniswap_module"
       },
       "locked": {
-        "lastModified": 1789843629,
-        "narHash": "sha256-oledzO5ARa43CrawJnTbxdE0gpoKfuXC5XbrpAw0CRM=",
+        "lastModified": 1789860250,
+        "narHash": "sha256-2DrYcsdI1jBxFp5ijjaskGoETuBsOE4en6Guw+Pgg7s=",
         "owner": "logos-co",
         "repo": "logos-uniswap-backend",
-        "rev": "3193aa9834bdb4bf66e8075d1726f1adb2d32460",
+        "rev": "b4a0e6f1304472442f089db859f588dd843f47f5",
         "type": "github"
       },
       "original": {
