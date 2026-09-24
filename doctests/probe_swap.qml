@@ -91,6 +91,9 @@ Item {
         property string swapsJson: JSON.stringify([{
             requestId: "snd_1", status: "confirmed", timestamp: 1756600000, origin: "uniswap_backend", via: "uniswap_ui",
             hashes: ["0xa0", "0xa1"], label: "Swap USDC for ETH on Uniswap V3",
+            // Settled after EIP-7708: the router's ether to the account is logged, and the
+            // backend reads what arrived off it. Not the quote.
+            received: "333100000000000000", receivedDisplay: "0.3331", receivedExact: "0.3331",
             swap: { kind: "swap", symbolIn: "USDC", symbolOut: "ETH", amountIn: "1000000000", decimalsIn: 6,
                     amountOut: "333277787035494084", decimalsOut: 18, amountOutMin: "331611398100316613",
                     route: { version: "V3", viaWeth: false, hops: [{ fee: 500 }] } },
@@ -309,18 +312,34 @@ Item {
             check("one row for the two-transaction swap", probe.node("swapTitle_snd_1").text, "Swap 1000 USDC for 0.33327 ETH")
             check("...settled as a whole", probe.node("swapStatus_snd_1").text, "confirmed")
             check("...counting its transactions", String(probe.node("swapWhen_snd_1").text).indexOf("2 transactions") > 0, true)
+            check("...and saying what it received, off the receipt",
+                  String(probe.node("swapWhen_snd_1").text).indexOf("received 0.3331 ETH") > 0, true)
+            check("an unmeasured swap claims nothing received", v.receivedLine({ swap: { symbolOut: "ETH" } }), "")
             v.openSwapDetail("snd_1")
             var nav = probe.find(v, "nav")
             check("a row opens the swap's own screen", nav.depth, 2)
             var screen = nav.currentItem
             check("...titled the same", probe.find(screen, "swapDetailTitle").text, "Swap 1000 USDC for 0.33327 ETH")
             check("...with the minimum it was sent with", probe.find(screen, "swapDetailMin").value, "0.33161 ETH")
+            check("...and what actually arrived", probe.find(screen, "swapDetailReceived").value, "0.3331 ETH")
+            check("...shown, because the receipt said so", probe.find(screen, "swapDetailReceived").visible, true)
+            check("...copying every digit", probe.find(screen, "swapDetailReceived").copyValue, "0.3331")
             check("...who asked, then the backend the sender attested", probe.find(screen, "swapDetailOrigin").value,
                   "uniswap_ui, through uniswap_backend")
             check("...and a row from before the backend names its origin alone", v.askedBy({ origin: "host" }), "host")
             check("...or nothing at all", v.askedBy({}), "—")
             check("...and both legs", probe.find(screen, "swapLegLabel_1").text, "2. Swap USDC for ETH on Uniswap V3")
             check("...each with its hash to copy", probe.find(screen, "swapLegHash_0").copyValue, "0xa0")
+
+            console.log("")
+            console.log("a swap no receipt log measured (ether out before Glamsterdam) says nothing")
+            var unmeasured = JSON.parse(fake.swapsJson)
+            delete unmeasured[0].received
+            delete unmeasured[0].receivedDisplay
+            delete unmeasured[0].receivedExact
+            fake.swapsJson = JSON.stringify(unmeasured)
+            check("no Received row: quoted is not received", probe.find(screen, "swapDetailReceived").visible, false)
+            check("...and its row claims nothing", String(probe.node("swapWhen_snd_1").text).indexOf("received"), -1)
 
             console.log("")
             console.log("an empty and an unknown list are two different answers")
