@@ -124,7 +124,7 @@ jobs:
           n=$(grep -c "RESULT: ALL PASS" /tmp/tables.log)
           echo "sections that reported: $n"; [ "$n" -ge 3 ]
           n=$(grep -c "  PASS  " /tmp/tables.log)
-          echo "assertions: $n"; [ "$n" -ge 150 ]
+          echo "assertions: $n"; [ "$n" -ge 162 ]
 
   kit:
     name: src/qml/kit is logos-evm-tx-kit as pinned

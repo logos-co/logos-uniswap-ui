@@ -377,6 +377,13 @@ Item {
         if (via.length && origin.length) return via + ", through " + origin
         return origin.length ? origin : "—"
     }
+    // What a settled swap's receipt says arrived, as the backend read it off the logs (an ERC-20
+    // Transfer, or EIP-7708's ether log). Empty when nothing measured it: quoted is not received.
+    function receivedLine(b) {
+        if (!b || b.receivedDisplay === undefined) return ""
+        var m = b.swap ? b.swap : ({})
+        return "received " + b.receivedDisplay + " " + (m.symbolOut || "")
+    }
     function swapTitle(b) {
         var m = b && b.swap ? b.swap : ({})
         if (m.amountIn !== undefined && m.symbolIn !== undefined && m.symbolOut !== undefined)
@@ -1172,6 +1179,8 @@ Item {
                                                 text: root.txWhen(modelData.timestamp)
                                                       + (modelData.legs !== undefined && modelData.legs.length > 1
                                                          ? " · " + modelData.legs.length + " transactions" : "")
+                                                      + (root.receivedLine(modelData).length
+                                                         ? " · " + root.receivedLine(modelData) : "")
                                             }
                                         }
                                         Rectangle {
@@ -1354,6 +1363,13 @@ Item {
                                 objectName: "swapDetailMin"
                                 label: "Minimum"
                                 value: root.units(swapDetail.meta.amountOutMin, swapDetail.meta.decimalsOut) + " " + (swapDetail.meta.symbolOut || "")
+                            }
+                            DetailRow {
+                                objectName: "swapDetailReceived"
+                                visible: swapDetail.bundle.receivedDisplay !== undefined
+                                label: "Received"
+                                value: (swapDetail.bundle.receivedDisplay || "") + " " + (swapDetail.meta.symbolOut || "")
+                                copyValue: swapDetail.bundle.receivedExact || ""
                             }
                             DetailRow {
                                 objectName: "swapDetailRoute"

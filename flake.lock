@@ -16947,11 +16947,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789864832,
-        "narHash": "sha256-+rou5vPUROM4GK7M0VUMFgUCT8AsTR9spo4rkscD2Fo=",
+        "lastModified": 1790268849,
+        "narHash": "sha256-xHMXRHhnv+3EkzWtkZL3do5FG7IDQtUtCgpe5e26SgE=",
         "owner": "logos-co",
         "repo": "logos-evm-tx-sender-module",
-        "rev": "69ed1d9f78e91b784faea1998f8ed7a6a7a64f2b",
+        "rev": "7cd2fead60a78ac9ac8a4337fd9f01e1ab5515e2",
         "type": "github"
       },
       "original": {
@@ -16974,11 +16974,11 @@
         "uniswap_module": "uniswap_module"
       },
       "locked": {
-        "lastModified": 1789866257,
-        "narHash": "sha256-LY8JlNdmnafqEK4qF7eBWKloUueLlJeEWs1UZtqpTUg=",
+        "lastModified": 1790271331,
+        "narHash": "sha256-zqrIEGTW7p1qU/54ZWsK1CrbuNULvWZ4Xk28PcOMJyg=",
         "owner": "logos-co",
         "repo": "logos-uniswap-backend",
-        "rev": "a6377e77c7455fcf21958343470de2b5064ac797",
+        "rev": "0b4b15421f58ecf5e8705669ba190dfb51c17a84",
         "type": "github"
       },
       "original": {
