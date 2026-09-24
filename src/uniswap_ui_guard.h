@@ -22,8 +22,9 @@ constexpr int kOneCallBudgetMs = guardBudgetMs(1);
 constexpr int kTwoCallBudgetMs = guardBudgetMs(2);
 
 /// A quote or a swap is one call to the backend, which builds and then prices or sends inside
-/// one allowance of its own (34 s): this is what the transport waits for it.
-constexpr int kSwapCallBudgetMs = 35000;
+/// one allowance of its own (58 s / 60 s, long for the verified proxy): this is what the
+/// transport waits for it, the backend's VIEW_SWAP_CALL.
+constexpr int kSwapCallBudgetMs = 62000;
 constexpr int kSwapClaimBudgetMs = kSwapCallBudgetMs + kGuardSlackMs;
 
 /// An in-flight claim that EXPIRES. An async callback can simply never fire, so a guard
