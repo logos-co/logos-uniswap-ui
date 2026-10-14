@@ -51,6 +51,10 @@ sections:
       - title: "Build the keystore"
         run: "nix build 'github:logos-co/logos-evm-keystore-module#install' --no-write-lock-file -o result-keystore"
         code_block: "nix build 'github:logos-co/logos-evm-keystore-module#install' --no-write-lock-file -o result-keystore"
+      # The sender asks the signer manager for approval, which asks the keystore.
+      - title: "Build the signer manager"
+        run: "nix build 'github:logos-co/logos-signer-manager-module#install' --no-write-lock-file -o result-signer"
+        code_block: "nix build 'github:logos-co/logos-signer-manager-module#install' --no-write-lock-file -o result-signer"
       - title: "Build the assets module"
         run: "nix build 'github:logos-co/logos-evm-assets-module#install' --no-write-lock-file -o result-assets"
         code_block: "nix build 'github:logos-co/logos-evm-assets-module#install' --no-write-lock-file -o result-assets"
@@ -72,7 +76,7 @@ sections:
         run: |
           set -euo pipefail
           rm -rf tree && mkdir -p tree/modules tree/plugins
-          for r in result-backend result-uniswap result-sender result-keystore result-rpc result-fee result-tokens result-assets result-capability; do
+          for r in result-backend result-uniswap result-sender result-signer result-keystore result-rpc result-fee result-tokens result-assets result-capability; do
             cp -r $r/modules/* tree/modules/
           done
           cp -r result-ui/plugins/* tree/plugins/
