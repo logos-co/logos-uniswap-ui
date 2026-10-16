@@ -40,6 +40,9 @@ class UniswapUi
     PROP(QString selectedAccount="" READONLY)
     PROP(QString accountLabelsJson="{}" READONLY)
     PROP(QString accountWalletsJson="{}" READONLY)
+    // The signer manager's roster, EVM entries only: each account once, with the wallet it comes
+    // from and every signer holding it. What the account picker shows.
+    PROP(QString accountRosterJson="[]" READONLY)
 
     // The tokens this app shows on its UI-local selected chain: `[{ symbol, name, decimals, address?,
     // native?, source? }]`. EMPTY means "not read yet"; the previous network's symbols are

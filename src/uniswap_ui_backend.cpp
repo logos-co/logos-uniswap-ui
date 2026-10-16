@@ -288,6 +288,9 @@ void UniswapUiBackend::loadAccounts()
         setAccountLabelsJson(member(reply, "labels"));
     if (names.contains(QStringLiteral("wallets")))
         setAccountWalletsJson(member(reply, "wallets"));
+    // Absent from a backend that read the keystore alone; the picker then shows addresses.
+    if (names.contains(QStringLiteral("roster")))
+        setAccountRosterJson(member(reply, "roster"));
 
     const QJsonArray list = QJsonDocument::fromJson(accountsJson().toUtf8()).array();
     const bool stillThere = std::any_of(list.begin(), list.end(), [this](const QJsonValue &v) {
