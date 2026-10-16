@@ -5,6 +5,8 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import "kit" as Kit
+import "accountkit" as Accounts
+import "accountkit/roster.js" as Roster
 
 // The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
 // everything else under the two cards, and this app's network visible at all times. The
@@ -119,6 +121,11 @@ Item {
     readonly property var accounts: ready ? j(backend.accountsJson, "[]") : []
     readonly property var accountLabels: ready ? j(backend.accountLabelsJson, "{}") : ({})
     readonly property var accountWallets: ready ? j(backend.accountWalletsJson, "{}") : ({})
+    // The signer manager's roster: each account once, with its wallet and every signer holding it.
+    readonly property var accountRoster: ready ? j(backend.accountRosterJson, "[]") : []
+    // The picker's rows: this app's accounts, in its order, each as the roster has it.
+    readonly property var accountEntries: accounts.map(function (a) { return root.accountEntry(a) })
+    readonly property var selectedEntry: selected ? accountEntry(selected) : null
     readonly property var fees: ready ? j(backend.feeTiersJson, "{}") : ({})
     readonly property bool feeTiersLoading: ready && backend.feeTiersLoading
     readonly property bool feesPending: feeTiersLoading && root.fees.source === undefined
@@ -218,6 +225,16 @@ Item {
     function accountDisplay(a) {
         var n = displayName(a)
         return n.length ? n + " · " + shortAddr(a) : shortAddr(a)
+    }
+    // An account as the picker shows it: the roster's entry, else what this app knows of it.
+    function accountEntry(a) {
+        var e = Roster.find(accountRoster, a)
+        if (e) return e
+        var w = a ? accountWallets[String(a).toLowerCase()] || accountWallets[a] : undefined
+        var entry = { key: String(a).toLowerCase(), family: "evm", address: a, label: accountLabel(a), holders: [] }
+        if (w && w.wallet) entry.wallet = { name: w.wallet }
+        if (w && w.index !== undefined) entry.path = "m/44'/60'/0'/0/" + w.index
+        return entry
     }
     function accountIndex(a) {
         for (var i = 0; i < accounts.length; ++i)
@@ -488,44 +505,6 @@ Item {
         }
     }
 
-    component AccountPicker: LogosComboBox {
-        id: picker
-        property var addresses: []
-        readonly property string currentAddress:
-            currentIndex >= 0 && currentIndex < addresses.length ? addresses[currentIndex] : ""
-        model: addresses
-        displayText: root.accountDisplay(picker.currentAddress)
-        delegate: ItemDelegate {
-            id: accountItem
-            width: picker.popupListView ? picker.popupListView.width : picker.width
-            objectName: "accountRow_" + index
-            highlighted: picker.highlightedIndex === index
-            background: Rectangle {
-                color: accountItem.highlighted ? Theme.palette.surface : "transparent"
-            }
-            HoverHandler { cursorShape: accountItem.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
-            contentItem: ColumnLayout {
-                spacing: 0
-                LogosText {
-                    Layout.fillWidth: true
-                    visible: text.length > 0
-                    textFormat: Text.PlainText
-                    text: root.displayName(modelData)
-                    elide: Text.ElideRight
-                }
-                LogosText {
-                    Layout.fillWidth: true
-                    textFormat: Text.PlainText
-                    text: root.shortAddr(modelData)
-                    color: Theme.palette.textSecondary
-                    font.family: Theme.typography.mono
-                    font.pixelSize: Theme.typography.secondaryText
-                    elide: Text.ElideNone
-                }
-            }
-        }
-    }
-
     component DetailRow: RowLayout {
         id: row
         property string label: ""
@@ -648,16 +627,17 @@ Item {
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacing.small
-            AccountPicker {
+            // The account kit's picker: one row per account, with its wallet and every signer
+            // holding it when open; the account alone in this header when closed.
+            Accounts.AccountPicker {
                 id: accountPicker
                 objectName: "accountPicker"
-                Layout.preferredWidth: 220
-                addresses: root.accounts
+                Layout.preferredWidth: 300
+                selectedLines: 1
+                entries: root.accountEntries
+                currentKey: root.selected
                 enabled: root.ready && root.accounts.length > 0
-                onActivated: if (root.ready) root.backend.selectAccount(root.accounts[currentIndex])
-                function syncIndex() { currentIndex = root.accountIndex(root.selected) }
-                Component.onCompleted: syncIndex()
-                onAddressesChanged: syncIndex()
+                onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
             }
             HoverIcon {
                 objectName: "manageAccountsButton"
@@ -670,6 +650,18 @@ Item {
                 onClicked: root.askFor("evm.accounts.manage", "No app on this device manages accounts.")
             }
             Item { Layout.fillWidth: true }
+        }
+        // A swap that needs an approval is two transactions in one request; a device that shows
+        // what it signs takes one at a time, so an account only such devices hold can't sign it.
+        LogosText {
+            objectName: "accountBundleNote"
+            visible: root.selectedEntry !== null && !Roster.signsBundles(root.selectedEntry)
+            Layout.fillWidth: true
+            text: "This account's signers take one transaction at a time, so a swap that needs an approval first can't be signed with it."
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
         }
         RowLayout {
             Layout.fillWidth: true
