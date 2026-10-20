@@ -628,16 +628,18 @@ Item {
             Layout.fillWidth: true
             spacing: Theme.spacing.small
             // The account kit's picker: one row per account, with its wallet and every signer
-            // holding it when open; the account alone in this header when closed.
+            // holding it when open; the account and its wallet in this header when closed.
             Accounts.AccountPicker {
                 id: accountPicker
                 objectName: "accountPicker"
                 Layout.preferredWidth: 300
-                selectedLines: 1
+                selectedLines: 2
                 entries: root.accountEntries
                 currentKey: root.selected
+                copyable: true
                 enabled: root.ready && root.accounts.length > 0
                 onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
+                onCopied: function (v) { root.lastCopiedValue = v }
             }
             HoverIcon {
                 objectName: "manageAccountsButton"
@@ -648,37 +650,6 @@ Item {
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 onClicked: root.askFor("evm.accounts.manage", "No app on this device manages accounts.")
-            }
-            Item { Layout.fillWidth: true }
-        }
-        // A swap that needs an approval is two transactions in one request; a device that shows
-        // what it signs takes one at a time, so an account only such devices hold can't sign it.
-        LogosText {
-            objectName: "accountBundleNote"
-            visible: root.selectedEntry !== null && !Roster.signsBundles(root.selectedEntry)
-            Layout.fillWidth: true
-            text: "This account's signers take one transaction at a time, so a swap that needs an approval first can't be signed with it."
-            textFormat: Text.PlainText
-            wrapMode: Text.Wrap
-            color: Theme.palette.textSecondary
-            font.pixelSize: Theme.typography.secondaryText
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Theme.spacing.small
-            LogosSelectableText {
-                objectName: "addressLabel"
-                text: root.shortAddr(root.selected)
-                color: Theme.palette.textSecondary
-                font.family: Theme.typography.mono
-            }
-            LogosCopyButton {
-                ToolTip.text: "Copy"
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                objectName: "addressCopyButton"
-                value: root.selected
-                onCopied: function (v) { root.lastCopiedValue = v }
             }
             Item { Layout.fillWidth: true }
             LogosComboBox {
@@ -708,6 +679,18 @@ Item {
                 text: root.chipText(chip)
                 color: root.chipColor(chip)
             }
+        }
+        // A swap that needs an approval is two transactions in one request; a device that shows
+        // what it signs takes one at a time, so an account only such devices hold can't sign it.
+        LogosText {
+            objectName: "accountBundleNote"
+            visible: root.selectedEntry !== null && !Roster.signsBundles(root.selectedEntry)
+            Layout.fillWidth: true
+            text: "This account's signers take one transaction at a time, so a swap that needs an approval first can't be signed with it."
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
         }
 
         LogosFrame {
