@@ -39,9 +39,9 @@ check("no password parameter on the .rep", re.search(r"password", REP_CODE, re.I
 check("...though the comment forbidding one is there", "NO password" in REP)
 check("...nor on the backend", re.search(r"password|privateKey|mnemonic|seed", CPP + HDR, re.I) is None)
 check("the view never calls a module itself", "logos.module(" in QML and ".call(" not in QML)
-check("the only intents are the three declared",
+check("the only intents are the four declared",
       sorted(set(re.findall(r'logos\.request\("([a-z_.]+)"', QML)) | {m for m in re.findall(r'askFor\("([a-z_.]+)"', QML)}),
-      ["evm.accounts.manage", "evm.signing.approve", "evm.token_lists.configure"])
+      ["evm.accounts.manage", "evm.signing.approve", "evm.token_lists.configure", "wallets.unlock"])
 
 print("0a. backend-authored strings are rendered as plain text")
 # Every LogosText whose text reads a backend property or a module reply carries PlainText.

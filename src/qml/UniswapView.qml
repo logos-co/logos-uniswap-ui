@@ -63,6 +63,17 @@ Item {
         })
     }
 
+    // The wallets still locked: their accounts show once the person unlocks them.
+    readonly property var signerWallets: {
+        if (!ready) return []
+        try { return JSON.parse(backend.signerWalletsJson) } catch (e) { return [] }
+    }
+    function unlockWallets(seeds) {
+        logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
+            if (res.ok) root.backend.refresh()
+        })
+    }
+
     // Codes that mean the intent path is CLOSED and no human is looking at the record; the
     // wallet's rule, verbatim, for the reasons written beside it there. `unavailable` is NOT
     // on the list: the signer may be openable by hand, and withdrawing there would delete the
@@ -622,6 +633,14 @@ Item {
         anchors.fill: parent
         anchors.margins: Theme.spacing.medium
         spacing: Theme.spacing.small
+
+        Accounts.LockedBanner {
+            namePrefix: "accounts"
+            Layout.fillWidth: true
+            visible: root.ready && shown
+            wallets: root.signerWallets
+            onUnlock: function (seeds) { root.unlockWallets(seeds) }
+        }
 
         // ── header: the account and the chain, over every screen ──
         RowLayout {
