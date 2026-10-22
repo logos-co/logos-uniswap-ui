@@ -69,7 +69,7 @@ Item {
         try { return JSON.parse(backend.signerWalletsJson) } catch (e) { return [] }
     }
     function unlockWallets(seeds) {
-        logos.request("logos.unlock", ({ seeds: seeds }), function (res) {
+        logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
             if (res.ok) root.backend.refresh()
         })
     }
