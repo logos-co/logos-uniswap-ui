@@ -16,6 +16,7 @@
   "uses": [
     { "intent": "evm.signing.approve", "cardinality": "single" },
     { "intent": "evm.accounts.manage", "cardinality": "single" },
+    { "intent": "logos.unlock", "cardinality": "single" },
     { "intent": "evm.token_lists.configure", "cardinality": "single" }
   ],
   "codegen": { "rep": "src/uniswap_ui.rep" },

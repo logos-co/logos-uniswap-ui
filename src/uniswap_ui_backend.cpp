@@ -291,6 +291,9 @@ void UniswapUiBackend::loadAccounts()
     // Absent from a backend that read the keystore alone; the picker then shows addresses.
     if (names.contains(QStringLiteral("roster")))
         setAccountRosterJson(member(reply, "roster"));
+    // Which wallets are still locked in the Signer app, for the view's banner.
+    if (names.contains(QStringLiteral("signerWallets")))
+        setSignerWalletsJson(member(reply, "signerWallets"));
 
     const QJsonArray list = QJsonDocument::fromJson(accountsJson().toUtf8()).array();
     const bool stillThere = std::any_of(list.begin(), list.end(), [this](const QJsonValue &v) {
