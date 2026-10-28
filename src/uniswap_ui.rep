@@ -43,6 +43,9 @@ class UniswapUi
     // The signer manager's roster, EVM entries only: each account once, with the wallet it comes
     // from and every signer holding it. What the account picker shows.
     PROP(QString accountRosterJson="[]" READONLY)
+    // The signer manager's wallets by public name, `[{ seed, name, locked, kinds }]`: a locked
+    // one's accounts aren't in the roster until the person unlocks it in the Signer app.
+    PROP(QString signerWalletsJson="[]" READONLY)
 
     // The tokens this app shows on its UI-local selected chain: `[{ symbol, name, decimals, address?,
     // native?, source? }]`. EMPTY means "not read yet"; the previous network's symbols are
