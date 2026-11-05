@@ -1,7 +1,7 @@
 {
   "name": "uniswap_ui",
   "display_name": "Uniswap",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "ui_qml",
   "interface": "universal",
   "category": "wallet",
@@ -11,7 +11,7 @@
   "icon": "src/icons/uniswap.png",
   "view": "qml/UniswapView.qml",
   "dependencies": [
-    { "name": "uniswap_backend", "version": "~0.1.0" }
+    { "name": "uniswap_backend", "version": "~0.2.0" }
   ],
   "uses": [
     { "intent": "evm.signing.approve", "cardinality": "single" },
