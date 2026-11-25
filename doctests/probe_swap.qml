@@ -236,7 +236,8 @@ Item {
             check("no account picked: the balance line says why it is empty", probe.node("sellBalance").text,
                   "Pick an account to see the balance")
             check("...and the reason beside the button asks for one", probe.node("swapReason").text, "Pick an account")
-            check("...and no Max without an account", probe.node("sellMaxButton").visible, false)
+            check("...and no Swap max without an account", probe.node("sellMaxSwitch").visible, false)
+            check("...nor the Max button it replaced", probe.node("sellMaxButton").visible, "<missing>")
             fake.selectedAccount = probe.me
             check("the flip control is a 36px button", probe.node("flipButton").size, 36)
             check("...its arrow in the full text colour, not a faint grey",
@@ -432,6 +433,51 @@ Item {
             check("a swap awaiting a human holds the button", probe.node("swapReason").text, "Waiting for approval")
             check("...which still reads Review swap", probe.node("swapButton").text, "Review swap")
             fake.pendingRequestId = ""
+
+            console.log("")
+            console.log("Swap max, as the Bitcoin wallet's Send max: a switch on its own line")
+            var maxSwitch = probe.node("sellMaxSwitch")
+            sellField.text = "100"
+            check("a token: everything it holds", maxSwitch.text, "Swap max: 2500 USDC")
+            check("...on its own line, a switch, off", maxSwitch.visible + "/" + maxSwitch.checked, "true/false")
+            maxSwitch.clicked()
+            check("on, it fills the amount", sellField.text, "2500")
+            check("...and the request carries it", JSON.parse(probe.quoted[probe.quoted.length - 1]).amountUnits, "2500")
+            check("...the field still editable", sellField.readOnly, false)
+            sellField.text = "2400"
+            check("another amount turns it off", page.swapMax + "/" + maxSwitch.checked, "false/false")
+            maxSwitch.clicked()
+            maxSwitch.clicked()
+            check("off again, the amount typed before comes back", sellField.text, "2400")
+            page.selectToken("buy", probe.usdcToken)
+            check("ether: the sides swapped, and Swap max starts off", page.sellSymbol + "/" + page.swapMax, "ETH/false")
+            check("ether keeps the chosen tier's max fee for a swap's gas back: 1.5 less 1.7 gwei × 300000",
+                  maxSwitch.text, "Swap max: 1.49949 ETH")
+            maxSwitch.clicked()
+            check("on, the field holds the exact rest", sellField.text, "1.49949")
+            check("...and says what it keeps back", probe.node("sellMaxNote").text, "Keeps 0.00051 ETH back for the network fee.")
+            probe.publishQuote({ fee: { ok: true, feeCeilingWei: "600000000000000", feeCeilingWeiDisplay: "0.0006",
+                                        maxFeePerGas: "1700000000", maxPriorityFeePerGas: "1", feeSource: "feeHistory" } })
+            check("a quote's own fee ceiling, once named, is what is kept back", sellField.text, "1.4994")
+            check("...still on", page.swapMax, true)
+            probe.publishQuote({ fee: { ok: true, feeCeilingWei: "100000000000000", feeCeilingWeiDisplay: "0.0001",
+                                        maxFeePerGas: "1700000000", maxPriorityFeePerGas: "1", feeSource: "feeHistory" } })
+            check("...and a lower one later does not move the field back up", sellField.text, "1.4994")
+            sellField.text = "1"
+            check("editing turns it off", page.swapMax, false)
+            fake.balancesJson = JSON.stringify([{ symbol: "ETH", native: true, display: "0.0001", exact: "0.0001" },
+                                                { symbol: "USDC", address: probe.usdc, display: "2500", exact: "2500" }])
+            check("less ether than the fee: Swap max is offered but cannot go on", maxSwitch.enabled, false)
+            check("...and says why", probe.node("sellMaxNote").text, "Not enough ETH to pay the network fee.")
+            fake.balancesJson = JSON.stringify([{ symbol: "ETH", native: true, display: "1.5", exact: "1.5" },
+                                                { symbol: "USDC", address: probe.usdc, display: "2500", exact: "2500" }])
+            check("the base-unit sums are exact", v.subBase("1500000000000000000", "600000000000000") + " "
+                  + v.fromBase("1499400000000000000", 18) + " " + v.mulBase("1700000000", 300000) + " "
+                  + v.toBase("1.5", 18) + " " + v.subBase("1", "2"), "1499400000000000000 1.4994 510000000000000 1500000000000000000 ")
+            page.selectToken("buy", probe.ethToken)
+            sellField.text = "1000"
+            probe.publishQuote({})
+            check("back to 1000 USDC for ETH", page.sellSymbol + "/" + page.buySymbol + " " + probe.node("swapButton").enabled, "USDC/ETH true")
 
             console.log("")
             console.log("the review dialog lists every transaction the signer will be asked for")

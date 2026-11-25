@@ -523,6 +523,59 @@ Item {
         if (whole === "0" && frac.length === 0) return d > 0 && /[1-9]/.test(s) ? "<0.00001" : "0"
         return frac.length ? whole + "." + frac : whole
     }
+    // Base-unit arithmetic on decimal strings: a balance in wei outgrows a JS number, and Swap
+    // max must come to the exact figure the field then holds. "" for anything not a number.
+    function toBase(amount, decimals) {
+        var s = String(amount || "").trim()
+        if (!/^[0-9]*\.?[0-9]*$/.test(s) || !/[0-9]/.test(s)) return ""
+        var d = decimals === undefined ? 18 : decimals
+        var parts = s.split(".")
+        var frac = (parts[1] || "")
+        if (frac.length > d) return ""
+        while (frac.length < d) frac += "0"
+        return ((parts[0] || "") + frac).replace(/^0+(?=[0-9])/, "")
+    }
+    function fromBase(base, decimals) {
+        var s = String(base || "")
+        if (!/^[0-9]+$/.test(s)) return ""
+        var d = decimals === undefined ? 18 : decimals
+        while (s.length <= d) s = "0" + s
+        var whole = s.substring(0, s.length - d).replace(/^0+(?=[0-9])/, "")
+        var frac = s.substring(s.length - d).replace(/0+$/, "")
+        return frac.length ? whole + "." + frac : whole
+    }
+    function cmpBase(a, b) {
+        a = String(a).replace(/^0+(?=[0-9])/, ""); b = String(b).replace(/^0+(?=[0-9])/, "")
+        if (a.length !== b.length) return a.length < b.length ? -1 : 1
+        return a < b ? -1 : a > b ? 1 : 0
+    }
+    // a - b, or "" when b is more than a.
+    function subBase(a, b) {
+        if (!/^[0-9]+$/.test(String(a)) || !/^[0-9]+$/.test(String(b)) || cmpBase(a, b) < 0) return ""
+        var x = String(a), y = String(b), out = "", borrow = 0
+        while (y.length < x.length) y = "0" + y
+        for (var i = x.length - 1; i >= 0; --i) {
+            var dgt = Number(x[i]) - Number(y[i]) - borrow
+            borrow = dgt < 0 ? 1 : 0
+            out = String(dgt + (borrow ? 10 : 0)) + out
+        }
+        return out.replace(/^0+(?=[0-9])/, "")
+    }
+    // a × n for a small whole n (a gas limit).
+    function mulBase(a, n) {
+        if (!/^[0-9]+$/.test(String(a)) || !(n >= 0)) return ""
+        var x = String(a), out = "", carry = 0
+        for (var i = x.length - 1; i >= 0; --i) {
+            var v = Number(x[i]) * n + carry
+            out = String(v % 10) + out
+            carry = Math.floor(v / 10)
+        }
+        return ((carry > 0 ? String(carry) : "") + out).replace(/^0+(?=[0-9])/, "")
+    }
+    // A swap's gas before any quote has priced one: a router swap from ether is one call, and
+    // Uniswap's run 120k to 200k; kept back only until a quote names its own ceiling.
+    readonly property int swapGasGuess: 300000
+
     function txWhen(ts) {
         if (!ts) return ""
         return Qt.formatDateTime(new Date(ts * 1000), "MMM d, HH:mm")
@@ -752,7 +805,13 @@ Item {
         property string amountDisplay: ""
         property string sideName: ""
         signal pickToken()
-        signal maxClicked()
+        // Swap max, as the Bitcoin wallet's Send max: a switch on its own line under the balance.
+        // `maxLine` empty hides it; `maxAvailable` false shows it off and disabled.
+        property string maxLine: ""
+        property string maxNote: ""
+        property bool maxOn: false
+        property bool maxAvailable: false
+        signal maxToggled()
         Layout.fillWidth: true
         contentItem: ColumnLayout {
             spacing: Theme.spacing.small
@@ -826,14 +885,30 @@ Item {
                     color: Theme.palette.textSecondary
                     font.pixelSize: Theme.typography.secondaryText
                 }
-                LogosButton {
-                    objectName: card.sideName + "MaxButton"
-                    visible: card.editable && card.token !== null && root.selected.length > 0
-                             && root.balanceExact(card.token).length > 0
-                    compact: true
-                    text: "Max"
-                    onClicked: card.maxClicked()
-                }
+            }
+            // Everything this account can sell, what it comes to, on a line of its own. On, the
+            // amount goes into the field, which stays editable; another amount turns it off.
+            LogosSwitch {
+                objectName: card.sideName + "MaxSwitch"
+                visible: card.editable && card.maxLine.length > 0
+                text: card.maxLine
+                checkable: false
+                checked: card.maxOn
+                enabled: card.maxAvailable || card.maxOn
+                // The off track in the page's background: on a framed card the design system's
+                // surface-coloured track is the card's own fill.
+                trackColorOff: Theme.palette.background
+                onClicked: card.maxToggled()
+            }
+            LogosText {
+                objectName: card.sideName + "MaxNote"
+                visible: card.editable && text.length > 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
+                text: card.maxNote
             }
         }
     }
@@ -1117,6 +1192,83 @@ Item {
                         property int calls: 1
                         property var callLabels: []
 
+                        // ── Swap max, the Bitcoin wallet's Send max ──
+                        property bool swapMax: false
+                        // The amount typed before Swap max went on, put back when it goes off.
+                        property string amountBeforeMax: ""
+                        // Ether a swap from ether keeps back for its network fee: the largest fee
+                        // ceiling a quote for this side has named (fee_module's maxFeePerGas × gas
+                        // limit, the sum the sender checks the balance against), so the figure only
+                        // grows while the quote re-prices and the field does not chase it. Before
+                        // any quote, the chosen tier's max fee × a swap's gas.
+                        property string feeReserveWei: ""
+                        readonly property bool sellsNative: sell !== null && sell.native === true
+                        readonly property int sellDecimals: sell && sell.decimals !== undefined ? sell.decimals : 18
+                        readonly property string gasReserveWei: {
+                            if (!sellsNative) return "0"
+                            if (feeReserveWei.length) return feeReserveWei
+                            var x = root.fees.tiers !== undefined && root.fees.tiers !== null ? root.fees.tiers[swapPage.tier] : undefined
+                            var mf = x !== undefined && x !== null && typeof x === "object" ? x.maxFeePerGas : x
+                            return Fees.isWhole(Fees.text(mf)) ? root.mulBase(Fees.text(mf), root.swapGasGuess) : ""
+                        }
+                        // The most the field can say, exactly; "" when it cannot be known or is nothing.
+                        readonly property string maxValue: {
+                            if (!sell || root.selected.length === 0) return ""
+                            var exact = root.balanceExact(sell)
+                            if (!exact.length) return ""
+                            var bal = root.toBase(exact, sellDecimals)
+                            if (!bal.length || gasReserveWei === "") return ""
+                            var left = root.subBase(bal, gasReserveWei)
+                            return left.length && /[1-9]/.test(left) ? root.fromBase(left, sellDecimals) : ""
+                        }
+                        readonly property string maxLine: {
+                            if (!sell || root.selected.length === 0 || !root.balanceExact(sell).length) return ""
+                            if (maxValue.length) return "Swap max: " + root.units(root.toBase(maxValue, sellDecimals), sellDecimals) + " " + sellSymbol
+                            return "Swap max"
+                        }
+                        readonly property string maxNote: {
+                            if (!sellsNative || !maxLine.length) return ""
+                            if (gasReserveWei === "") return "Swap max waits for a fee to know how much " + sellSymbol + " to keep back."
+                            if (!maxValue.length) return "Not enough " + sellSymbol + " to pay the network fee."
+                            return swapMax ? "Keeps " + root.fromBase(gasReserveWei, 18) + " " + sellSymbol + " back for the network fee." : ""
+                        }
+                        function setSwapMax(on) {
+                            if (on === swapMax) return
+                            if (on) {
+                                if (!maxValue.length) return
+                                amountBeforeMax = sellCard.amountText
+                                swapMax = true
+                                sellCard.amountText = maxValue
+                            } else {
+                                swapMax = false
+                                sellCard.amountText = amountBeforeMax
+                                amountBeforeMax = ""
+                            }
+                        }
+                        // Read off every quote that lands for ether out of this account, paired or
+                        // not: a swap's gas hardly moves with its amount, and reading the paired one
+                        // would move the field from inside the pairing.
+                        function takeReserve() {
+                            if (!sellsNative || root.quote.ok !== true || root.quote.fee === undefined
+                                || root.quote.fee.ok === false) return
+                            var r = root.j(root.quoteRequest, "{}")
+                            if (r.tokenIn !== "ETH" || !root.sameHex(r.from, root.selected)) return
+                            var c = Fees.text(root.quote.fee.feeCeilingWei)
+                            if (Fees.isWhole(c) && (feeReserveWei === "" || root.cmpBase(c, feeReserveWei) > 0))
+                                feeReserveWei = c
+                        }
+                        function dropMax() { swapMax = false; amountBeforeMax = ""; feeReserveWei = "" }
+                        onMaxValueChanged: if (swapMax && maxValue.length) sellCard.amountText = maxValue
+                        onSellChanged: dropMax()
+                        onTierChanged: feeReserveWei = ""
+                        Connections {
+                            target: root
+                            function onSelectedChanged() { swapPage.dropMax() }
+                            function onNetChanged() { swapPage.dropMax() }
+                            function onQuoteChanged() { swapPage.takeReserve() }
+                            function onQuoteRequestChanged() { swapPage.takeReserve() }
+                        }
+
                         // Picking the token the other side holds swaps the two, as Uniswap's own
                         // picker does, so the form never holds one token twice.
                         function selectToken(side, t) {
@@ -1146,6 +1298,7 @@ Item {
                                                   ? String(swapForm.q.amountOutExact) : ""
                         }
                         function clearForm() {
+                            swapPage.dropMax()
                             sellCard.amountText = ""
                             swapPage.impactAcknowledged = false
                         }
@@ -1238,7 +1391,16 @@ Item {
                                         token: swapPage.sell
                                         editable: true
                                         onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
-                                        onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
+                                        maxLine: swapPage.maxLine
+                                        maxNote: swapPage.maxNote
+                                        maxOn: swapPage.swapMax
+                                        maxAvailable: swapPage.maxValue.length > 0
+                                        onMaxToggled: swapPage.setSwapMax(!swapPage.swapMax)
+                                        // Editable under Swap max too: another amount turns it off.
+                                        onAmountTextChanged: if (swapPage.swapMax && amountText !== swapPage.maxValue) {
+                                            swapPage.swapMax = false
+                                            swapPage.amountBeforeMax = ""
+                                        }
                                     }
                                     // Swaps the two sides; the quoted output becomes the amount sold. A
                                     // plain down arrow in the full text colour on the raised pill, as
