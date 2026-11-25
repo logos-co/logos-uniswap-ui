@@ -772,7 +772,7 @@ Item {
                 }
                 LogosButton {
                     objectName: card.sideName + "MaxButton"
-                    visible: card.editable && card.token !== null
+                    visible: card.editable && card.token !== null && root.selected.length > 0
                              && root.balanceExact(card.token).length > 0
                     compact: true
                     text: "Max"

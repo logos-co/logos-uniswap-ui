@@ -224,6 +224,7 @@ Item {
             check("no account picked: the balance line says why it is empty", probe.node("sellBalance").text,
                   "Pick an account to see the balance")
             check("...and the reason beside the button asks for one", probe.node("swapReason").text, "Pick an account")
+            check("...and no Max without an account", probe.node("sellMaxButton").visible, false)
             fake.selectedAccount = probe.me
             check("the flip control is a 32px button", probe.node("flipButton").size, 32)
             check("...not a flat ghost", probe.node("flipButton").flat, false)
