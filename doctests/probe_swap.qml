@@ -238,7 +238,12 @@ Item {
             check("...and the reason beside the button asks for one", probe.node("swapReason").text, "Pick an account")
             check("...and no Max without an account", probe.node("sellMaxButton").visible, false)
             fake.selectedAccount = probe.me
-            check("the flip control is a 32px button", probe.node("flipButton").size, 32)
+            check("the flip control is a 36px button", probe.node("flipButton").size, 36)
+            check("...its arrow in the full text colour, not a faint grey",
+                  String(probe.node("flipButton").iconColor), String(probe.node("appTitle").color))
+            check("...a down arrow drawn upright, not a rotated chevron",
+                  String(probe.node("flipButton").iconSource).indexOf("arrow-down.svg") > 0
+                  && probe.node("flipButton").iconImage.rotation === 0, true)
             check("...not a flat ghost", probe.node("flipButton").flat, false)
             page.selectToken("buy", probe.usdcToken)
             probe.node("flipButton").clicked()

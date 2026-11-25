@@ -251,6 +251,7 @@ Item {
     readonly property url iconArrowLeft: Qt.resolvedUrl("assets/arrow-left.svg")
     readonly property url iconTriangleDown: Qt.resolvedUrl("assets/triangle-down.svg")
     readonly property url iconRefresh: Qt.resolvedUrl("assets/refresh.svg")
+    readonly property url iconArrowDown: Qt.resolvedUrl("assets/arrow-down.svg")
 
     // The design system's radio and checkbox draw an unselected ring in `border` over a `surface`
     // fill: on a framed card, itself `surface`, the ring all but vanishes. Inside a frame these
@@ -1206,25 +1207,26 @@ Item {
                                     onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
                                     onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
                                 }
-                                // Swaps the two sides; the quoted output becomes the amount sold.
+                                // Swaps the two sides; the quoted output becomes the amount sold. A
+                                // plain down arrow in the full text colour on the raised pill, as
+                                // Uniswap's own: the old double chevron in secondary grey was all but
+                                // invisible on the dark page.
                                 LogosIconButton {
                                     id: flipButton
                                     objectName: "flipButton"
                                     Layout.alignment: Qt.AlignHCenter
                                     Layout.topMargin: -Theme.spacing.tiny
                                     Layout.bottomMargin: -Theme.spacing.tiny
-                                    size: 32
-                                    iconSize: 16
-                                    iconSource: LogosIcons.arrowRightDouble
-                                    iconColor: isActive ? Theme.palette.text : Theme.palette.textSecondary
+                                    size: 36
+                                    iconSize: 20
+                                    iconSource: root.iconArrowDown
+                                    iconColor: Theme.palette.text
                                     enabled: swapPage.sell !== null || swapPage.buy !== null
                                     Accessible.name: "Swap sell and buy"
                                     ToolTip.text: "Swap sell and buy"
                                     ToolTip.visible: hovered
                                     ToolTip.delay: 400
                                     onClicked: swapPage.flip()
-                                    // Pointing down, the icon only: the tooltip stays upright.
-                                    Binding { target: flipButton.iconImage; property: "rotation"; value: 90 }
                                 }
                                 SwapCard {
                                     id: buyCard
