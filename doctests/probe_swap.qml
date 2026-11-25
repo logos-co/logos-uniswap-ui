@@ -56,6 +56,7 @@ Item {
     // What the backend's quote pipeline was asked, so the request the form describes can be
     // asserted rather than inferred.
     property var quoted: []
+    property var networkPicks: []
 
     QtObject {
         id: fake
@@ -103,7 +104,7 @@ Item {
         property bool sweepingReceipts: false
         function refresh() {}
         function selectAccount(a) {}
-        function selectNetwork(chainId) {}
+        function selectNetwork(chainId) { var l = probe.networkPicks; l.push(chainId); probe.networkPicks = l }
         function searchTokens(q) {}
         function loadMoreCatalogue() {}
         function quote(r) { var l = probe.quoted; l.push(r); probe.quoted = l }
@@ -158,21 +159,25 @@ Item {
         interval: 300
         onTriggered: {
             var v = view.item
-            console.log("the network picker follows the backend's two-step publication")
-            var picker = probe.node("chainPicker")
+            console.log("the network chip names this app's chain and opens the Network sheet")
             fake.networksJson = JSON.stringify([
-                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false }
-            ])
-            check("the choices alone cannot select a different active chain", picker.currentIndex, -1)
-            fake.activeNetworkJson = JSON.stringify(
-                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false })
-            check("publishing the chosen chain selects its row", picker.currentIndex, 0)
-            fake.networksJson = JSON.stringify([
+                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false },
                 { chainId: 11155111, name: "Sepolia", nativeSymbol: "ETH", testnet: true }
             ])
             fake.activeNetworkJson = JSON.stringify(
+                { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false })
+            check("the chip names the chain", probe.node("chainChip").text, "Ethereum")
+            check("...its row in the sheet is the one ticked", probe.inDialog("networkSheet", "networkRow_1").checked, true)
+            check("...and no other", probe.inDialog("networkSheet", "networkRow_11155111").checked, false)
+            probe.inDialog("networkSheet", "networkRow_11155111").clicked()
+            check("a row asks the backend for its chain", JSON.stringify(probe.networkPicks), JSON.stringify([11155111]))
+            fake.activeNetworkJson = JSON.stringify(
                 { chainId: 11155111, name: "Sepolia", nativeSymbol: "ETH", testnet: true })
-            check("and a later chain publication stays synchronized", picker.currentIndex, 0)
+            check("the chip follows the published chain, saying it is a testnet", probe.node("chainChip").text, "Sepolia (testnet)")
+            check("...and so does the sheet", probe.inDialog("networkSheet", "networkRow_11155111").checked, true)
+            fake.networksJson = JSON.stringify([
+                { chainId: 11155111, name: "Sepolia", nativeSymbol: "ETH", testnet: true }
+            ])
 
             console.log("")
             console.log("a blocking verdict says what to do, for every action eth_rpc sends")

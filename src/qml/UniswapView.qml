@@ -183,17 +183,19 @@ Item {
     readonly property string nativeSymbol: net.nativeSymbol !== undefined ? net.nativeSymbol : ""
     readonly property bool isTestnet: net.testnet === true
     function networkLabel() { return netKnown ? netName + (isTestnet ? " (testnet)" : "") : "—" }
-    function networkIndex() {
-        for (var i = 0; i < networks.length; ++i)
-            if (networks[i].chainId === net.chainId) return i
-        return -1
-    }
     function networkChoiceLabel(n) {
         var name = n.name !== undefined && String(n.name).length ? String(n.name) : "Chain " + n.chainId
-        return name + (n.testnet === true ? " · TESTNET" : "")
+        return name + " · " + n.chainId
     }
     readonly property bool swapPending: ready && backend.pendingRequestId.length > 0
     readonly property string selected: ready ? backend.selectedAccount : ""
+    // The wallets still locked, and the two states without an account to swap from: nothing at
+    // all yet, and everything locked.
+    readonly property var lockedWallets: Roster.lockedWallets(root.signerWallets)
+    readonly property bool noAccounts: ready && accounts.length === 0
+    readonly property bool fullyLocked: noAccounts && lockedWallets.length > 0
+    readonly property var mainnetChains: networks.filter(function (n) { return n.testnet !== true })
+    readonly property var testnetChains: networks.filter(function (n) { return n.testnet === true })
 
     readonly property url iconArrowLeft: Qt.resolvedUrl("assets/arrow-left.svg")
     readonly property url iconTriangleDown: Qt.resolvedUrl("assets/triangle-down.svg")
@@ -634,65 +636,99 @@ Item {
         anchors.margins: Theme.spacing.medium
         spacing: Theme.spacing.small
 
-        Accounts.LockedBanner {
-            namePrefix: "accounts"
-            Layout.fillWidth: true
-            visible: root.ready && shown
-            wallets: root.signerWallets
-            onUnlock: function (seeds) { root.unlockWallets(seeds) }
-        }
-
-        // ── header: the account and the chain, over every screen ──
+        // ── header, as the Ethereum and Bitcoin wallets: the title and its help on the left;
+        // Accounts, the account picker and the network chip on the right ──
         RowLayout {
             Layout.fillWidth: true
-            spacing: Theme.spacing.small
-            // The account kit's picker: one row per account, with its wallet and every signer
-            // holding it when open; the account and its wallet in this header when closed.
-            Accounts.AccountPicker {
-                id: accountPicker
-                objectName: "accountPicker"
-                Layout.preferredWidth: 300
-                selectedLines: 2
-                entries: root.accountEntries
-                currentKey: root.selected
-                copyable: true
-                enabled: root.ready && root.accounts.length > 0
-                onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
-                onCopied: function (v) { root.lastCopiedValue = v }
+            spacing: Theme.spacing.medium
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+                    LogosText {
+                        objectName: "appTitle"
+                        text: "Uniswap"
+                        color: Theme.palette.text
+                        font.pixelSize: 28
+                        font.weight: Theme.typography.weightBold
+                    }
+                    LogosInfoButton {
+                        objectName: "appHelp"
+                        title: "Uniswap"
+                        Accessible.name: "Help: Uniswap"
+                        text: "Swap one token for another on Uniswap, from your Ethereum accounts. Accounts come from "
+                              + "your signer apps (Keystore, Keycard, a Keycard Shell); this app never holds their keys. "
+                              + "Every swap is shown to you before it is sent, and approved in the signer that holds the "
+                              + "account. The network is this app's own choice, from the networks enabled in Ethereum RPC. "
+                              + "While every wallet is locked there is nothing to swap from: the locked wallets are listed "
+                              + "by the app that unlocks them (Keystore, Keycard), each with its own Unlock."
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                LogosText {
+                    objectName: "appSubtitle"
+                    text: "Swap tokens from your Ethereum accounts."
+                    color: Theme.palette.textSecondary
+                    font.pixelSize: Theme.typography.secondaryText
+                }
             }
+
+            // Kept in every state, the fully locked one included: it is where accounts are added.
             HoverIcon {
                 objectName: "manageAccountsButton"
+                Layout.alignment: Qt.AlignVCenter
                 size: 32
                 iconSize: 16
                 iconSource: LogosIcons.grid
+                Accessible.name: "Accounts"
                 ToolTip.text: "Accounts"
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 onClicked: root.askFor("evm.accounts.manage", "No app on this device manages accounts.")
             }
-            Item { Layout.fillWidth: true }
-            LogosComboBox {
-                id: chainPicker
-                objectName: "chainPicker"
-                Layout.preferredWidth: 190
-                model: root.networks.map(function (n) { return root.networkChoiceLabel(n) })
-                enabled: root.ready && root.networks.length > 0
-                onActivated: if (root.ready && currentIndex >= 0)
-                    root.backend.selectNetwork(root.networks[currentIndex].chainId)
-                function syncIndex() { currentIndex = root.networkIndex() }
-                Component.onCompleted: syncIndex()
-                onModelChanged: syncIndex()
-                // loadNetwork publishes the choices before it publishes the chosen row. The
-                // first publication therefore cannot find the choice yet; follow the second
-                // one as well or the control keeps currentIndex=-1 while the rest of the view
-                // is already reading Ethereum.
-                Connections {
-                    target: root
-                    function onNetChanged() { chainPicker.syncIndex() }
-                }
+
+            // The kit's one-line picker, as the wallets have it. Its dropdown ends with the
+            // wallets still locked, one block per device app, each with its own Unlock.
+            Accounts.CompactAccountPicker {
+                id: accountPicker
+                objectName: "accountPicker"
+                visible: !root.noAccounts
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Math.min(320, root.width * 0.42)
+                entries: root.accountEntries
+                currentKey: root.selected
+                copyable: true
+                enabled: root.ready && root.accounts.length > 0
+                lockedWallets: root.lockedWallets
+                onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
+                onCopied: function (v) { root.lastCopiedValue = v }
+                onUnlock: function (seeds) { root.unlockWallets(seeds) }
+            }
+
+            // This app's network, as a chip: it opens the Network sheet. Green on a mainnet,
+            // orange on a test network.
+            LogosBadge {
+                id: chainChip
+                objectName: "chainChip"
+                Layout.alignment: Qt.AlignVCenter
+                visible: root.ready
+                text: root.netKnown ? root.networkLabel() : "No network"
+                color: !root.netKnown ? Theme.palette.textSecondary
+                       : root.isTestnet ? Theme.palette.accentOrange : Theme.palette.success
+                Accessible.role: Accessible.Button
+                Accessible.name: "Network: " + text
+                HoverHandler { id: chainChipHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: networkSheet.open() }
+                ToolTip.visible: chainChipHover.hovered
+                ToolTip.text: "Change network"
+                ToolTip.delay: 400
             }
             LogosBadge {
                 objectName: "verifiedChip"
+                Layout.alignment: Qt.AlignVCenter
                 readonly property string chip: root.chipState(root.vp, root.balancesRoute)
                 visible: root.ready && chip !== "hidden"
                 text: root.chipText(chip)
@@ -1431,6 +1467,53 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // ── the Network sheet, opened from the header chip ───────────────────────────
+    // This app's own choice, from the networks enabled in Ethereum RPC that Uniswap is on.
+    component NetworkChoice: LogosRadioButton {
+        required property var modelData
+        objectName: "networkRow_" + modelData.chainId
+        Layout.fillWidth: true
+        text: root.networkChoiceLabel(modelData)
+        checkable: false
+        checked: modelData.chainId === root.net.chainId
+        onClicked: {
+            if (root.ready && !checked) root.backend.selectNetwork(modelData.chainId)
+            networkSheet.close()
+        }
+    }
+    LogosDialog {
+        id: networkSheet
+        objectName: "networkSheet"
+        title: "Network"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing.small
+            LogosText {
+                objectName: "networkSheetNote"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
+                text: root.networks.length > 0
+                      ? "The networks enabled in Ethereum RPC that Uniswap runs on. The choice is this app's own, for this session."
+                      : "No network enabled in Ethereum RPC is one Uniswap runs on."
+            }
+            LogosText {
+                visible: root.mainnetChains.length > 0
+                text: "Mainnets"
+                color: Theme.palette.textSecondary
+            }
+            Repeater { model: root.mainnetChains; delegate: NetworkChoice {} }
+            LogosText {
+                visible: root.testnetChains.length > 0
+                text: "Testnets"
+                color: Theme.palette.textSecondary
+            }
+            Repeater { model: root.testnetChains; delegate: NetworkChoice {} }
         }
     }
 

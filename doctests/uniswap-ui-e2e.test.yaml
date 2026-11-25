@@ -165,11 +165,11 @@ sections:
               find_value: "verifiedBannerAction"
               property: "text"
               value: "Install and start the Verified Proxy module, then reopen this app."
-            - name: "The network selector defaults to Ethereum, which only a wired chain registry can do"
+            - name: "The network chip defaults to Ethereum, which only a wired chain registry can do"
               action: expect_property
-              find_value: "chainPicker"
-              property: "currentIndex"
-              value: 0
+              find_value: "chainChip"
+              property: "text"
+              value: "Ethereum"
             - name: "An empty keystore: the swap button says so"
               action: expect_property
               find_value: "swapButton"

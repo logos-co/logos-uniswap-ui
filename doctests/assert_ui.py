@@ -88,10 +88,13 @@ check("...and the only client the view's C++ calls", sorted(set(re.findall(r"mod
 check("...so no module the backend composes is reached around it",
       re.search(r"keystore_module|tx_sender_module|uniswap_module|eth_wallet_backend", CPP + HDR) is None)
 check("the chain selector is part of the contract and view",
-      "selectNetwork(int chainId)" in REP and 'objectName: "chainPicker"' in QML)
-check("the chain selector follows both halves of backend initialization",
-      "onModelChanged: syncIndex()" in QML
-      and "function onNetChanged() { chainPicker.syncIndex() }" in QML)
+      "selectNetwork(int chainId)" in REP and 'objectName: "chainChip"' in QML
+      and 'objectName: "networkSheet"' in QML)
+check("the chip opens the Network sheet, whose rows select a chain",
+      "TapHandler { onTapped: networkSheet.open() }" in QML
+      and "root.backend.selectNetwork(modelData.chainId)" in QML)
+check("...and a row is ticked by the published chain, not by an index",
+      "checked: modelData.chainId === root.net.chainId" in QML)
 
 print("0e. the swap is offered only when the quote says it can be paid for")
 check("the button is enabled on the ready state alone",
