@@ -1647,7 +1647,7 @@ Item {
                                     anchors.top: parent.top
                                     anchors.left: parent.left
                                     anchors.right: parent.right
-                                    height: Theme.size.borderWidth
+                                    height: 1
                                     color: Theme.palette.border
                                 }
                                 RowLayout {
