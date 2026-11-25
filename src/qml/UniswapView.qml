@@ -5,6 +5,7 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import "kit" as Kit
+import "kit/fees.js" as Fees
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
 
@@ -147,6 +148,16 @@ Item {
     readonly property var fees: ready ? j(backend.feeTiersJson, "{}") : ({})
     readonly property bool feeTiersLoading: ready && backend.feeTiersLoading
     readonly property bool feesPending: feeTiersLoading && root.fees.source === undefined
+    // What a tier pays per gas, from fee_module's suggestion: "up to 1.7 gwei", or "" when the
+    // suggestion names no max fee for it. The cost of the swap itself at each tier would need a
+    // quote per tier; the sender prices the chosen one only (the summary under the picker).
+    function tierEstimate(t) {
+        var x = root.fees.tiers !== undefined && root.fees.tiers !== null ? root.fees.tiers[t] : undefined
+        if (x === undefined || x === null) return ""
+        var wei = typeof x === "object" ? x.maxFeePerGas : x
+        var g = Fees.gwei(wei)
+        return g.length ? "up to " + g + " gwei" : ""
+    }
     readonly property var settings: ready ? j(backend.settingsJson, "{}") : ({})
     readonly property int slippageBps: settings.slippageBps !== undefined ? settings.slippageBps : 50
     readonly property int deadlineMins: settings.deadlineMins !== undefined ? settings.deadlineMins : 30
@@ -565,6 +576,93 @@ Item {
                 value: row.copyValue
                 onCopied: function (v) { root.lastCopiedValue = v }
             }
+        }
+    }
+
+    // Max slippage and the transaction deadline: in Settings, and under the Fee block's
+    // Advanced. `prefix` keeps the two copies' objectNames apart ("" in Settings).
+    component SwapPrefs: ColumnLayout {
+        id: prefs
+        property string prefix: ""
+        function nm(n) { return prefix.length ? prefix + n.charAt(0).toUpperCase() + n.slice(1) : n }
+        spacing: Theme.spacing.small
+
+        LogosText {
+            text: "Max slippage"
+            font.weight: Theme.typography.weightMedium
+        }
+        RowLayout {
+            spacing: Theme.spacing.medium
+            LogosRadioButton {
+                objectName: prefs.nm("slippageAuto")
+                text: "Auto (0.5%)"
+                checkable: false
+                checked: root.settings.autoSlippage === true
+                onClicked: if (root.ready) root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+            }
+            LogosRadioButton {
+                objectName: prefs.nm("slippageCustom")
+                text: "Custom"
+                checkable: false
+                checked: root.settings.autoSlippage !== true
+                onClicked: slippageField.textInput.forceActiveFocus()
+            }
+            LogosTextField {
+                id: slippageField
+                objectName: prefs.nm("slippageField")
+                Layout.preferredWidth: 96
+                placeholderText: "%"
+                text: root.settings.autoSlippage === true ? "" : (root.slippageBps / 100).toString()
+                // Applied when the field is left, not on every keystroke: "1." is not a slippage
+                // yet. LogosTextField wraps a TextInput and exposes it, so the signal is the inner
+                // item's.
+                function apply() {
+                    var pct = parseFloat(text)
+                    if (isNaN(pct) || !root.ready) return
+                    root.backend.setSettings(JSON.stringify({ autoSlippage: false,
+                                                              slippageBps: Math.round(pct * 100) }))
+                }
+                Connections {
+                    target: slippageField.textInput
+                    function onEditingFinished() { slippageField.apply() }
+                }
+            }
+            LogosText { text: "%"; color: Theme.palette.textSecondary }
+        }
+        LogosText {
+            objectName: prefs.nm("slippageNote")
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: root.slippageBps > 100 ? Theme.palette.warning : Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: root.slippageBps > 100
+                  ? "A high slippage lets a swap settle far below the quote."
+                  : "The swap reverts if the rate moves more than this before it lands."
+        }
+
+        LogosText {
+            Layout.topMargin: Theme.spacing.small
+            text: "Transaction deadline"
+            font.weight: Theme.typography.weightMedium
+        }
+        RowLayout {
+            spacing: Theme.spacing.small
+            LogosTextField {
+                id: deadlineField
+                objectName: prefs.nm("deadlineField")
+                Layout.preferredWidth: 96
+                text: root.deadlineMins.toString()
+                function apply() {
+                    var m = parseInt(text)
+                    if (isNaN(m) || !root.ready) return
+                    root.backend.setSettings(JSON.stringify({ deadlineMins: m }))
+                }
+                Connections {
+                    target: deadlineField.textInput
+                    function onEditingFinished() { deadlineField.apply() }
+                }
+            }
+            LogosText { text: "minutes"; color: Theme.palette.textSecondary }
         }
     }
 
@@ -1061,80 +1159,134 @@ Item {
                                     onPickToken: { swapPage.picking = "buy"; tokenPicker.open() }
                                 }
 
-                                // The rate, and everything under it.
-                                LogosText {
-                                    objectName: "rateLine"
-                                    visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
-                                    Layout.fillWidth: true
-                                    textFormat: Text.PlainText
-                                    text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
-                                }
-                                ColumnLayout {
-                                    objectName: "quoteDetails"
+                                // The quote, framed: the rate, and everything under it.
+                                LogosFrame {
+                                    objectName: "quoteCard"
                                     visible: swapForm.q.ok === true
                                     Layout.fillWidth: true
-                                    spacing: Theme.spacing.tiny
-                                    DetailRow {
-                                        objectName: "minReceivedRow"
-                                        label: "Minimum received"
-                                        value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
-                                    }
-                                    DetailRow {
-                                        objectName: "impactRow"
-                                        label: "Price impact"
-                                        value: root.impactText(swapForm.q.priceImpactBps)
-                                        valueColor: swapForm.severe ? Theme.palette.error
-                                                  : swapForm.warn ? Theme.palette.warning : Theme.palette.text
-                                    }
-                                    DetailRow {
-                                        objectName: "routeRow"
-                                        label: "Route"
-                                        value: root.routeLine(swapForm.q.route)
-                                    }
-                                    DetailRow {
-                                        objectName: "feeTierRow"
-                                        label: "Pool fee"
-                                        value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
-                                    }
-                                    DetailRow {
-                                        objectName: "slippageRow"
-                                        label: "Max slippage"
-                                        value: (root.slippageBps / 100) + "%"
-                                    }
-                                    DetailRow {
-                                        objectName: "approvalRow"
-                                        visible: swapForm.q.needsApproval === true
-                                        label: "Approval"
-                                        value: swapForm.q.approval === "resetThenSet"
-                                               ? "Reset and approve " + swapPage.sellSymbol + " first"
-                                               : "Approve " + swapPage.sellSymbol + " first"
-                                    }
-                                    // What the sender priced: the ceiling, each call's gas, the fees and nonces.
-                                    Kit.TxFeeSummary {
-                                        objectName: "swapFeeSummary"
-                                        quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                        tier: swapPage.tier
-                                        calls: swapPage.calls
-                                        nativeSymbol: root.nativeSymbol
-                                    }
-                                    LogosText {
-                                        objectName: "quoteRouteNote"
-                                        visible: root.verificationOn
-                                        Layout.fillWidth: true
-                                        wrapMode: Text.WordWrap
-                                        color: Theme.palette.textSecondary
-                                        font.pixelSize: Theme.typography.secondaryText
-                                        text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                    contentItem: ColumnLayout {
+                                        spacing: Theme.spacing.tiny
+                                        LogosText {
+                                            objectName: "rateLine"
+                                            visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
+                                            Layout.fillWidth: true
+                                            textFormat: Text.PlainText
+                                            font.weight: Theme.typography.weightMedium
+                                            text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
+                                        }
+                                        ColumnLayout {
+                                            objectName: "quoteDetails"
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacing.tiny
+                                            DetailRow {
+                                                objectName: "minReceivedRow"
+                                                label: "Minimum received"
+                                                value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
+                                            }
+                                            DetailRow {
+                                                objectName: "impactRow"
+                                                label: "Price impact"
+                                                value: root.impactText(swapForm.q.priceImpactBps)
+                                                valueColor: swapForm.severe ? Theme.palette.error
+                                                          : swapForm.warn ? Theme.palette.warning : Theme.palette.text
+                                            }
+                                            DetailRow {
+                                                objectName: "routeRow"
+                                                label: "Route"
+                                                value: root.routeLine(swapForm.q.route)
+                                            }
+                                            DetailRow {
+                                                objectName: "feeTierRow"
+                                                label: "Pool fee"
+                                                value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
+                                            }
+                                            DetailRow {
+                                                objectName: "slippageRow"
+                                                label: "Max slippage"
+                                                value: (root.slippageBps / 100) + "%"
+                                            }
+                                            DetailRow {
+                                                objectName: "approvalRow"
+                                                visible: swapForm.q.needsApproval === true
+                                                label: "Approval"
+                                                value: swapForm.q.approval === "resetThenSet"
+                                                       ? "Reset and approve " + swapPage.sellSymbol + " first"
+                                                       : "Approve " + swapPage.sellSymbol + " first"
+                                            }
+                                            LogosText {
+                                                objectName: "quoteRouteNote"
+                                                visible: root.verificationOn
+                                                Layout.fillWidth: true
+                                                wrapMode: Text.WordWrap
+                                                color: Theme.palette.textSecondary
+                                                font.pixelSize: Theme.typography.secondaryText
+                                                text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                            }
+                                        }
                                     }
                                 }
 
-                                // Fee tiers and the Advanced fields, one implementation with the wallet's.
-                                Kit.FeeTierPicker { id: tierGroup; label: "Fee" }
-                                Kit.TxAdvancedFields {
-                                    id: advanced
-                                    quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                    calls: swapPage.calls
-                                    callLabels: swapPage.callLabels
+                                // The fee, framed as the wallet's: Low / Market / Fast as radios with
+                                // what each tier pays per gas, what the sender priced, and the
+                                // Advanced disclosure.
+                                LogosFrame {
+                                    objectName: "feeCard"
+                                    Layout.fillWidth: true
+                                    contentItem: ColumnLayout {
+                                        spacing: Theme.spacing.small
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: Theme.spacing.small
+                                            LogosText { text: "Fee"; font.weight: Theme.typography.weightBold }
+                                            LogosSpinner {
+                                                objectName: "feeTiersSpinner"
+                                                implicitWidth: 14
+                                                implicitHeight: 14
+                                                visible: root.feesPending
+                                                running: visible
+                                                ringColor: Theme.palette.textSecondary
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                        }
+                                        SwapFeeTierPicker {
+                                            id: tierGroup
+                                            estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
+                                                          fast: root.tierEstimate("fast") })
+                                        }
+                                        // What the sender priced: the ceiling, each call's gas, the fees and nonces.
+                                        Kit.TxFeeSummary {
+                                            objectName: "swapFeeSummary"
+                                            visible: swapForm.q.ok === true
+                                            quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                            tier: swapPage.tier
+                                            calls: swapPage.calls
+                                            nativeSymbol: root.nativeSymbol
+                                        }
+                                        // The disclosure says what it opens. It drives the kit's own
+                                        // fields, whose bare "Advanced" box is hidden under it.
+                                        LogosCheckbox {
+                                            objectName: "swapAdvancedToggle"
+                                            text: "Advanced: slippage, deadline, gas and nonce"
+                                            checkable: false
+                                            checked: advanced.open
+                                            onClicked: advanced.open = !advanced.open
+                                        }
+                                        SwapPrefs {
+                                            prefix: "advanced"
+                                            visible: advanced.open
+                                            Layout.fillWidth: true
+                                        }
+                                        Kit.TxAdvancedFields {
+                                            id: advanced
+                                            quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                            calls: swapPage.calls
+                                            callLabels: swapPage.callLabels
+                                            Component.onCompleted: {
+                                                for (var i = 0; i < children.length; ++i)
+                                                    if (children[i].objectName === "advancedToggle") children[i].visible = false
+                                            }
+                                        }
+                                    }
                                 }
 
                                 LogosText {
@@ -1312,109 +1464,58 @@ Item {
                         }
                     }
 
-                    // ── Settings ──
+                    // ── Settings, in framed blocks ──
                     Item {
                         objectName: "settingsPage"
-                        ColumnLayout {
+                        LogosScrollView {
+                            id: settingsScroll
                             anchors.fill: parent
-                            anchors.margins: Theme.spacing.medium
-                            spacing: Theme.spacing.small
+                            contentWidth: availableWidth
+                            ColumnLayout {
+                                width: settingsScroll.availableWidth
+                                spacing: Theme.spacing.small
 
-                            LogosText {
-                                text: "Max slippage"
-                                font.weight: Theme.typography.weightMedium
-                            }
-                            RowLayout {
-                                spacing: Theme.spacing.tiny
-                                LogosButton {
-                                    objectName: "slippageAuto"
-                                    text: "Auto (0.5%)"
-                                    variant: root.settings.autoSlippage === true
-                                             ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
-                                    onClicked: root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                                LogosFrame {
+                                    objectName: "settingsSwapCard"
+                                    Layout.fillWidth: true
+                                    contentItem: SwapPrefs { prefix: "" }
                                 }
-                                LogosTextField {
-                                    id: slippageField
-                                    objectName: "slippageField"
-                                    Layout.preferredWidth: 120
-                                    placeholderText: "Custom %"
-                                    text: root.settings.autoSlippage === true ? "" : (root.slippageBps / 100).toString()
-                                    // Applied when the field is left, not on every keystroke: "1." is
-                                    // not a slippage yet. LogosTextField wraps a TextInput and exposes
-                                    // it, so the signal is the inner item's.
-                                    function apply() {
-                                        var pct = parseFloat(text)
-                                        if (isNaN(pct) || !root.ready) return
-                                        root.backend.setSettings(JSON.stringify({ autoSlippage: false,
-                                                                                  slippageBps: Math.round(pct * 100) }))
-                                    }
-                                    Connections {
-                                        target: slippageField.textInput
-                                        function onEditingFinished() { slippageField.apply() }
-                                    }
-                                }
-                            }
-                            LogosText {
-                                objectName: "slippageNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: root.slippageBps > 100 ? Theme.palette.warning : Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: root.slippageBps > 100
-                                      ? "A high slippage lets a swap settle far below the quote."
-                                      : "The swap reverts if the rate moves more than this before it lands."
-                            }
 
-                            LogosText {
-                                text: "Transaction deadline"
-                                font.weight: Theme.typography.weightMedium
-                            }
-                            RowLayout {
-                                spacing: Theme.spacing.tiny
-                                LogosTextField {
-                                    id: deadlineField
-                                    objectName: "deadlineField"
-                                    Layout.preferredWidth: 120
-                                    text: root.deadlineMins.toString()
-                                    function apply() {
-                                        var m = parseInt(text)
-                                        if (isNaN(m) || !root.ready) return
-                                        root.backend.setSettings(JSON.stringify({ deadlineMins: m }))
-                                    }
-                                    Connections {
-                                        target: deadlineField.textInput
-                                        function onEditingFinished() { deadlineField.apply() }
+                                LogosFrame {
+                                    objectName: "settingsLinksCard"
+                                    Layout.fillWidth: true
+                                    contentItem: ColumnLayout {
+                                        spacing: 0
+                                        LogosText {
+                                            text: "Managed in other apps"
+                                            font.weight: Theme.typography.weightBold
+                                        }
+                                        LogosItemDelegate {
+                                            objectName: "tokenListsEntry"
+                                            Layout.fillWidth: true
+                                            text: "Token lists"
+                                            onClicked: root.askFor("evm.token_lists.configure",
+                                                                   "No app on this device manages token lists.")
+                                        }
+                                        LogosItemDelegate {
+                                            objectName: "accountsEntry"
+                                            Layout.fillWidth: true
+                                            text: "Accounts"
+                                            onClicked: root.askFor("evm.accounts.manage",
+                                                                   "No app on this device manages accounts.")
+                                        }
                                     }
                                 }
-                                LogosText { text: "minutes"; color: Theme.palette.textSecondary }
+                                LogosText {
+                                    objectName: "settingsNote"
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    color: Theme.palette.textSecondary
+                                    font.pixelSize: Theme.typography.secondaryText
+                                    text: "This app's network is chosen from the chip in the header. "
+                                          + "Slippage, deadline, and that choice are kept for this session."
+                                }
                             }
-
-                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderTertiaryMuted }
-
-                            LogosItemDelegate {
-                                objectName: "tokenListsEntry"
-                                Layout.fillWidth: true
-                                text: "Token lists"
-                                onClicked: root.askFor("evm.token_lists.configure",
-                                                       "No app on this device manages token lists.")
-                            }
-                            LogosItemDelegate {
-                                objectName: "accountsEntry"
-                                Layout.fillWidth: true
-                                text: "Accounts"
-                                onClicked: root.askFor("evm.accounts.manage",
-                                                       "No app on this device manages accounts.")
-                            }
-                            LogosText {
-                                objectName: "settingsNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: "This app's network is selected in the header from the enabled device scope. "
-                                      + "Slippage, deadline, and that selection are kept for this session."
-                            }
-                            Item { Layout.fillHeight: true }
                         }
                     }
                 }

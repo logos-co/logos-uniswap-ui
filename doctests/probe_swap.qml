@@ -38,6 +38,14 @@ Item {
     function node(name) {
         return find(view.item, name) || ({ text: "<missing>", visible: "<missing>", enabled: "<missing>", value: "<missing>" })
     }
+    // Visible primary LogosButtons under an item: a LogosButton is what has both a variant and a labelItem.
+    function primaries(o) {
+        if (!o || o.visible === false) return 0
+        var n = (o.variant === 0 && o.labelItem !== undefined) ? 1 : 0
+        var kids = o.data !== undefined ? o.data : []
+        for (var i = 0; i < kids.length; ++i) n += primaries(kids[i])
+        return n
+    }
     function inDialog(dialogName, name) {
         var d = find(view.item, dialogName)
         var hit = (d && d.contentItem) ? find(d.contentItem, name) : null
@@ -259,6 +267,33 @@ Item {
             check("each call's gas limit", probe.node("gasLimitRow").value, "46000 + 180000")
             check("the max fee, in gwei", probe.node("maxFeeRow").value, "1.7 gwei")
             check("the nonces the two calls take", probe.node("nonceRow").value, "7, 8")
+            console.log("")
+            console.log("the Fee block: the wallet's radios, each with what its tier pays per gas")
+            check("Market is the tier on", probe.node("tierNormal").checked, true)
+            check("...a radio, not a second primary button", probe.node("tierNormal").variant, undefined)
+            check("no estimate where fee_module named none", probe.node("tierNormalEstimate").visible, false)
+            fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
+                tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
+                         fast: { maxFeePerGas: "2500000000" } } })
+            check("Low's ceiling per gas", probe.node("tierSlowEstimate").text, "up to 1.2 gwei")
+            check("Market's", probe.node("tierNormalEstimate").text, "up to 1.7 gwei")
+            check("Fast's", probe.node("tierFastEstimate").text, "up to 2.5 gwei")
+            probe.node("tierFast").clicked()
+            check("a click picks the tier", page.tier, "fast")
+            check("...and the request carries it", JSON.parse(probe.quoted[probe.quoted.length - 1]).tier, "fast")
+            probe.node("tierNormal").clicked()
+            probe.publishQuote({})
+            check("one primary button on the page: the action", probe.primaries(page), 1)
+            check("the kit's bare Advanced box is hidden under the disclosure", probe.node("advancedToggle").visible, false)
+            check("the disclosure says what it opens", probe.node("swapAdvancedToggle").text,
+                  "Advanced: slippage, deadline, gas and nonce")
+            probe.node("swapAdvancedToggle").clicked()
+            check("it opens the kit's fields", probe.node("advancedToggle").checked, true)
+            check("...and slippage and the deadline", probe.node("advancedDeadlineField").visible, true)
+            check("...at their values", probe.node("advancedDeadlineField").text, "30")
+            probe.node("swapAdvancedToggle").clicked()
+            check("and closes them", probe.node("advancedDeadlineField").visible, false)
+
             console.log("")
             console.log("and the Advanced section this app did not have")
             probe.node("advancedToggle").checked = true
