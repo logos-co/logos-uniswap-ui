@@ -102,6 +102,15 @@ check("the button is enabled on the ready state alone",
 check("the review confirm is what submits", "root.backend.submitSwap(swapForm.formRequest)" in QML)
 check("...and the swap button only opens the review", re.search(r'objectName: "swapButton".*?onClicked: reviewDialog\.open\(\)', QML, re.S) is not None)
 
+print("0f. an error shows only where its action was taken")
+check("the review shows its own refusal, never the live swapError",
+      "error: shownError" in QML and "error: root.ready ? root.backend.swapError" not in QML)
+check("no line renders swapError or lastError raw",
+      re.search(r"text: root\.ready \? root\.backend\.(swapError|lastError)", QML) is None)
+check("errors lose their machine code", "Errors.human(" in QML
+      and "replace(/^[A-Z][A-Za-z]+:\\s*/" in (SRC / "qml" / "errors.js").read_text())
+check("a Confirm nobody answers is let go", "onTriggered: root.submitTimedOut()" in QML)
+
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")
 sys.exit(1 if failures else 0)

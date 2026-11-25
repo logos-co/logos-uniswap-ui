@@ -8,6 +8,7 @@ import "kit" as Kit
 import "kit/fees.js" as Fees
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
+import "errors.js" as Errors
 
 // The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
 // everything else under the two cards, and this app's network visible at all times. The
@@ -40,6 +41,32 @@ Item {
     // From the click until the backend has either taken the swap or refused it. Both clear
     // it, or a refusal leaves the button dead with nothing on the page to revive it.
     property bool swapSubmitting: false
+    // ── one error, one place ─────────────────────────────────────────────────────
+    // swapError stays set until the next success. The review keeps its own refusal, read as its
+    // Confirm is answered, and shows it itself; the page's line shows only what the page did:
+    // never while a sheet is up, and never an error already on screen when one opened or closed.
+    readonly property bool sheetUp: reviewDialog.visible || networkSheet.visible || tokenPicker.visible
+    property string swapErrorSeen: ""
+    onSheetUpChanged: root.swapErrorSeen = root.ready ? root.backend.swapError : ""
+    readonly property string swapPageError:
+        !ready || sheetUp || root.backend.swapError === swapErrorSeen ? "" : Errors.human(root.backend.swapError)
+    // The wallet-wide read failure, under the header; held back while a sheet is up.
+    readonly property string pageError: !ready || sheetUp ? "" : Errors.human(root.backend.lastError)
+
+    // A submit nobody answered: the backend lets its own claim lapse with an error, but a call
+    // it refused to start says nothing at all, so the button must not wait forever on it.
+    Timer {
+        id: submitWatchdog
+        interval: 95000
+        running: root.swapSubmitting
+        onTriggered: root.submitTimedOut()
+    }
+    function submitTimedOut() {
+        if (!root.swapSubmitting) return
+        root.swapSubmitting = false
+        reviewDialog.shownError = "The swap did not answer. Nothing was sent; try again."
+    }
+
     property string approvalNote: ""
     property string intentNote: ""
     property string dismissedOutcome: ""
@@ -118,7 +145,13 @@ Item {
             }
         }
         function onSwapErrorChanged() {
-            if (root.backend.swapError.length > 0) root.swapSubmitting = false
+            if (root.backend.swapError.length > 0) {
+                // A refusal of the review's own Confirm: the review says why, as it was given.
+                if (root.swapSubmitting) reviewDialog.shownError = Errors.human(root.backend.swapError)
+                root.swapSubmitting = false
+            } else {
+                root.swapErrorSeen = ""
+            }
         }
         function onPendingApprovalHandleChanged() {
             if (root.backend.pendingApprovalHandle !== "") root.askToApprove()
@@ -951,7 +984,7 @@ Item {
             objectName: "errorRow"
             Layout.fillWidth: true
             Layout.fillHeight: false
-            visible: root.ready && root.backend.lastError.length > 0
+            visible: root.pageError.length > 0
             spacing: 8
             LogosText {
                 objectName: "errorLabel"
@@ -959,7 +992,7 @@ Item {
                 textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 color: Theme.palette.error
-                text: root.ready ? root.backend.lastError : ""
+                text: root.pageError
             }
             LogosButton {
                 objectName: "errorRetryButton"
@@ -1325,12 +1358,12 @@ Item {
                                 }
                                 LogosText {
                                     objectName: "swapErrorLabel"
-                                    visible: root.ready && root.backend.swapError.length > 0
+                                    visible: text.length > 0
                                     Layout.fillWidth: true
                                     textFormat: Text.PlainText
                                     wrapMode: Text.WordWrap
                                     color: Theme.palette.error
-                                    text: root.ready ? root.backend.swapError : ""
+                                    text: root.swapPageError
                                 }
 
                                 // The page's one primary action, always named "Review swap"; while it
@@ -1848,11 +1881,16 @@ Item {
         ]
         callList: sq.calls !== undefined ? sq.calls : []
         nameOf: root.shortAddr
-        error: root.ready ? root.backend.swapError : ""
+        // Its own refusal, read as its Confirm is answered; never the live swapError.
+        property string shownError: ""
+        error: shownError
+        onOpened: shownError = ""
+        onClosed: shownError = ""
         confirmText: "Confirm swap"
         busy: root.swapSubmitting
         confirmEnabled: root.ready && !root.swapSubmitting && !root.swapPending
         onConfirmed: {
+            shownError = ""
             root.swapSubmitting = true
             root.backend.submitSwap(swapForm.formRequest)
         }

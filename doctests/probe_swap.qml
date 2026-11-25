@@ -46,6 +46,7 @@ Item {
         for (var i = 0; i < kids.length; ++i) n += primaries(kids[i])
         return n
     }
+    function networkSheetOpen() { probe.find(view.item, "networkSheet").open() }
     function inDialog(dialogName, name) {
         var d = find(view.item, dialogName)
         var hit = (d && d.contentItem) ? find(d.contentItem, name) : null
@@ -366,7 +367,41 @@ Item {
             check("the second is the swap", probe.inDialog("reviewDialog", "reviewCall_1").text, "2. Swap USDC for ETH on Uniswap V3 · 0x3bFA…e48E")
 
             console.log("")
-            console.log("the Activity tab shows this app's bundles, one row per swap")
+            console.log("an error stays where its action was taken")
+            review.open()
+            review.confirmed()
+            check("Confirm waits on the backend", v.swapSubmitting, true)
+            fake.swapError = "Rejected: the pool moved"
+            check("the review says why, without the machine code", probe.inDialog("reviewDialog", "reviewError").text, "the pool moved")
+            check("...and frees its Confirm", v.swapSubmitting, false)
+            check("the page does not repeat it under the open review", probe.node("swapErrorLabel").visible, false)
+            review.close()
+            check("closed, the review forgets it", review.error, "")
+            check("...and the page does not take it over", probe.node("swapErrorLabel").visible, false)
+            fake.swapError = ""
+            fake.swapError = "no route found"
+            check("a quote's own refusal is the page's", probe.node("swapErrorLabel").text, "no route found")
+            networkSheetOpen()
+            check("...held back while a sheet is up", probe.node("swapErrorLabel").visible, false)
+            probe.find(v, "networkSheet").close()
+            fake.swapError = ""
+            fake.lastError = "ReadFailed: the node did not answer"
+            check("a failed read shows under the header, code stripped", probe.node("errorLabel").text, "the node did not answer")
+            networkSheetOpen()
+            check("...and not while a sheet is up", probe.node("errorRow").visible, false)
+            probe.find(v, "networkSheet").close()
+            check("...back once it closes", probe.node("errorRow").visible, true)
+            fake.lastError = ""
+            review.open()
+            review.confirmed()
+            v.submitTimedOut()
+            check("a Confirm nobody answers does not hold the button", v.swapSubmitting, false)
+            check("...and the review says so", probe.inDialog("reviewDialog", "reviewError").text,
+                  "The swap did not answer. Nothing was sent; try again.")
+            review.close()
+
+            console.log("")
+            console.log("the Activity tab shows this app's bundles, one card per swap")
             v.selectTab(1)
             activitySettle.start()
         }
