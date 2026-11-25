@@ -202,7 +202,25 @@ Item {
             check("the network coin is seeded as the sell side", page.sellSymbol, "ETH")
             check("nothing to buy yet: the button asks for a token", probe.node("swapButton").text, "Select a token")
             check("...and is disabled", probe.node("swapButton").enabled, false)
+            console.log("")
+            console.log("the two cards read alike, and only the page's action is primary")
+            check("no token to buy: its button is secondary", probe.node("buyTokenButton").variant, 1)
+            check("...and says what it does", probe.node("buyTokenButton").text, "Select token")
+            check("the token button is as tall as the amount field", probe.node("sellTokenButton").height,
+                  probe.node("sellAmountField").height)
+            check("the Buy amount is a field too, read-only", probe.node("buyAmountField").readOnly, true)
+            check("the balance under the Sell field", probe.node("sellBalance").text, "Balance: 1.5")
+            fake.selectedAccount = ""
+            check("no account picked: the balance line says why it is empty", probe.node("sellBalance").text,
+                  "Pick an account to see the balance")
+            fake.selectedAccount = probe.me
+            check("the flip control is a 32px button", probe.node("flipButton").size, 32)
+            check("...not a flat ghost", probe.node("flipButton").flat, false)
             page.selectToken("buy", probe.usdcToken)
+            probe.node("flipButton").clicked()
+            check("a flip swaps the sides", page.sellSymbol + "/" + page.buySymbol, "USDC/ETH")
+            probe.node("flipButton").clicked()
+            check("...and back", page.sellSymbol + "/" + page.buySymbol, "ETH/USDC")
             check("a pair with no amount asks for one", probe.node("swapButton").text, "Enter an amount")
             page.selectToken("buy", probe.ethToken)
             check("the same token twice is refused", probe.node("swapButton").text, "Choose two different tokens")
@@ -225,7 +243,7 @@ Item {
             check("...and the default deadline", req.deadlineMins, 30)
             fake.quoteLoading = false
             probe.publishQuote({})
-            check("the buy card shows the quoted output", probe.node("buyAmountLabel").text, "0.33327")
+            check("the buy card shows the quoted output", probe.node("buyAmountField").text, "0.33327")
             check("the rate line", probe.node("rateLine").text, "1 USDC = 0.000333278 ETH")
             check("the minimum received", probe.node("minReceivedRow").value, "0.33161 ETH")
             check("the price impact, as a percentage", probe.node("impactRow").value, "0.02%")
@@ -263,10 +281,10 @@ Item {
             console.log("")
             console.log("the figures are withdrawn the moment the form changes")
             sellField.text = "1001"
-            check("a changed amount unpairs the quote", probe.node("buyAmountLabel").text, "0")
+            check("a changed amount unpairs the quote", probe.node("buyAmountField").text, "")
             check("...and the button no longer offers it", probe.node("swapButton").enabled, false)
             sellField.text = "1000"
-            check("the same request pairs again", probe.node("buyAmountLabel").text, "0.33327")
+            check("the same request pairs again", probe.node("buyAmountField").text, "0.33327")
 
             console.log("")
             console.log("what the quote can say against the swap")

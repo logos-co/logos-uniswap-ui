@@ -568,7 +568,9 @@ Item {
         }
     }
 
-    // One of the two cards: what you sell, what you buy.
+    // One of the two cards: what you sell, what you buy. Both read alike: a heading, the amount
+    // in the same framed field (the Buy one is the quote's result, not typed) with the token
+    // button as tall as it, and the balance under them.
     component SwapCard: LogosFrame {
         id: card
         property string heading: ""
@@ -581,12 +583,11 @@ Item {
         signal maxClicked()
         Layout.fillWidth: true
         contentItem: ColumnLayout {
-            spacing: Theme.spacing.tiny
+            spacing: Theme.spacing.small
             LogosText {
                 textFormat: Text.PlainText
                 text: card.heading
-                color: Theme.palette.textSecondary
-                font.pixelSize: Theme.typography.secondaryText
+                font.weight: Theme.typography.weightBold
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -595,34 +596,43 @@ Item {
                     id: amountField
                     objectName: card.sideName + "AmountField"
                     Layout.fillWidth: true
-                    visible: card.editable
+                    readOnly: !card.editable
                     placeholderText: "0"
                     font.pixelSize: Theme.typography.pageTitleText
+                    Accessible.name: card.heading + " amount"
                 }
-                LogosText {
-                    objectName: card.sideName + "AmountLabel"
-                    Layout.fillWidth: true
-                    visible: !card.editable
-                    textFormat: Text.PlainText
-                    text: card.amountDisplay.length ? card.amountDisplay : "0"
-                    color: card.amountDisplay.length ? Theme.palette.text : Theme.palette.textTertiary
-                    font.pixelSize: Theme.typography.pageTitleText
-                    elide: Text.ElideRight
+                // The Buy field shows the quote's output and follows it.
+                Binding {
+                    target: amountField
+                    property: "text"
+                    value: card.amountDisplay
+                    when: !card.editable
                 }
+                // A choice, not the page's action: secondary, with the dropdown's triangle.
                 LogosButton {
                     objectName: card.sideName + "TokenButton"
+                    // As tall as the amount field beside it.
+                    Layout.preferredHeight: amountField.height
                     text: card.token ? String(card.token.symbol) : "Select token"
-                    variant: card.token ? LogosButton.Variant.Secondary : LogosButton.Variant.Primary
+                    variant: LogosButton.Variant.Secondary
+                    trailingIcon.source: root.iconTriangleDown
                     onClicked: card.pickToken()
                 }
             }
             RowLayout {
                 Layout.fillWidth: true
                 visible: card.token !== null
+                spacing: Theme.spacing.small
                 LogosText {
                     objectName: card.sideName + "Balance"
+                    Layout.fillWidth: true
                     textFormat: Text.PlainText
-                    text: card.token ? "Balance: " + root.balanceDisplay(card.token) : ""
+                    elide: Text.ElideRight
+                    text: !card.token ? ""
+                          : root.selected.length === 0
+                            ? (root.accounts.length === 0 ? "Add an account to see the balance"
+                                                          : "Pick an account to see the balance")
+                            : "Balance: " + root.balanceDisplay(card.token)
                     color: Theme.palette.textSecondary
                     font.pixelSize: Theme.typography.secondaryText
                 }
@@ -630,10 +640,10 @@ Item {
                     objectName: card.sideName + "MaxButton"
                     visible: card.editable && card.token !== null
                              && root.balanceExact(card.token).length > 0
+                    compact: true
                     text: "Max"
                     onClicked: card.maxClicked()
                 }
-                Item { Layout.fillWidth: true }
             }
         }
     }
@@ -1019,17 +1029,25 @@ Item {
                                     onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
                                     onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
                                 }
-                                HoverIcon {
+                                // Swaps the two sides; the quoted output becomes the amount sold.
+                                LogosIconButton {
+                                    id: flipButton
                                     objectName: "flipButton"
                                     Layout.alignment: Qt.AlignHCenter
+                                    Layout.topMargin: -Theme.spacing.tiny
+                                    Layout.bottomMargin: -Theme.spacing.tiny
                                     size: 32
                                     iconSize: 16
                                     iconSource: LogosIcons.arrowRightDouble
-                                    rotation: 90
-                                    ToolTip.text: "Swap sides"
+                                    iconColor: isActive ? Theme.palette.text : Theme.palette.textSecondary
+                                    enabled: swapPage.sell !== null || swapPage.buy !== null
+                                    Accessible.name: "Swap sell and buy"
+                                    ToolTip.text: "Swap sell and buy"
                                     ToolTip.visible: hovered
                                     ToolTip.delay: 400
                                     onClicked: swapPage.flip()
+                                    // Pointing down, the icon only: the tooltip stays upright.
+                                    Binding { target: flipButton.iconImage; property: "rotation"; value: 90 }
                                 }
                                 SwapCard {
                                     id: buyCard
