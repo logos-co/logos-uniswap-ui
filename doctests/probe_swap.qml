@@ -159,6 +159,12 @@ Item {
         interval: 300
         onTriggered: {
             var v = view.item
+            console.log("the layout: the design system's page margin, and a centred column of 560")
+            check("the tabs run the page's width, inside a 40px desktop margin", probe.node("tabs").width, 1000 - 2 * 40)
+            check("the content column is capped at 560", probe.node("nav").width, 560)
+            check("...and centred", probe.node("nav").x, (1000 - 2 * 40 - 560) / 2)
+
+            console.log("")
             console.log("the network chip names this app's chain and opens the Network sheet")
             fake.networksJson = JSON.stringify([
                 { chainId: 1, name: "Ethereum", nativeSymbol: "ETH", testnet: false },

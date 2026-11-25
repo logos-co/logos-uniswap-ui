@@ -638,9 +638,17 @@ Item {
         }
     }
 
+    // The design system's page margin for this width (16 on a phone, 20 on a tablet, 40 on a
+    // desktop); a host whose design system predates it gets the phone's.
+    readonly property real pageMargin: typeof Theme.pageMargin === "function"
+                                       ? Theme.pageMargin(root.width) : Theme.spacing.large
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacing.medium
+        anchors.leftMargin: root.pageMargin
+        anchors.rightMargin: root.pageMargin
+        anchors.topMargin: Theme.spacing.large
+        anchors.bottomMargin: Theme.spacing.large
         spacing: Theme.spacing.small
 
         // ── header, as the Ethereum and Bitcoin wallets: the title and its help on the left;
@@ -877,6 +885,10 @@ Item {
             objectName: "nav"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // The content column, capped and centred at 560 like the wallets, Keycard and Signer;
+            // the tabs above stay full width.
+            Layout.maximumWidth: 560
+            Layout.alignment: Qt.AlignHCenter
             visible: !root.fullyLocked
 
             initialItem: Item {
