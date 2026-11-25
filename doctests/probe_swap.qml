@@ -326,6 +326,18 @@ Item {
             probe.node("tierNormal").clicked()
             probe.publishQuote({})
             check("one primary button on the page: the action", probe.primaries(page), 1)
+            console.log("")
+            console.log("the action bar is pinned under the form, which scrolls above it")
+            var bar = probe.node("swapActionBar"), scroll = probe.node("swapScroll")
+            probe.node("swapAdvancedToggle").clicked()
+            check("the form lives in the scroll view, not beside the bar",
+                  probe.node("swapForm").parent === scroll.contentItem.contentItem
+                  || probe.node("swapForm").parent.parent === scroll.contentItem, true)
+            check("with the quote, the fee and Advanced open, the bar ends at the page's foot", Math.round(bar.mapToItem(page, 0, bar.height).y), Math.round(page.height))
+            check("...with Review swap inside the page", probe.node("swapButton").mapToItem(page, 0, probe.node("swapButton").height).y <= page.height, true)
+            check("...and the reason in the bar beside it", probe.node("swapReason").parent.parent === bar, true)
+            check("the form scrolls in the space above the bar", Math.round(scroll.height + bar.height), Math.round(page.height))
+            probe.node("swapAdvancedToggle").clicked()
             check("the kit's bare Advanced box is hidden under the disclosure", probe.node("advancedToggle").visible, false)
             check("the disclosure says what it opens", probe.node("swapAdvancedToggle").text,
                   "Advanced: slippage, deadline, gas and nonce")

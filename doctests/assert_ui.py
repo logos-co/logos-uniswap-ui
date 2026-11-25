@@ -111,6 +111,12 @@ check("errors lose their machine code", "Errors.human(" in QML
       and "replace(/^[A-Z][A-Za-z]+:\\s*/" in (SRC / "qml" / "errors.js").read_text())
 check("a Confirm nobody answers is let go", "onTriggered: root.submitTimedOut()" in QML)
 
+print("0g. the swap's action is pinned, and no scroll view draws a horizontal bar")
+check("the swap form scrolls above a pinned action bar holding Review swap",
+      re.search(r'objectName: "swapScroll".*?objectName: "swapActionBar".*?objectName: "swapReason".*?objectName: "swapButton"', QML, re.S) is not None)
+check("every scroll view turns its horizontal bar off",
+      QML.count("LogosScrollView {"), QML.count("ScrollBar.horizontal.policy: ScrollBar.AlwaysOff"))
+
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")
 sys.exit(1 if failures else 0)

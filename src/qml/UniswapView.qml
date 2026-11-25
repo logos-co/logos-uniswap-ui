@@ -1136,286 +1136,317 @@ Item {
                             function onTokensChanged() { swapPage.seedSell() }
                         }
 
-                        LogosScrollView {
-                            id: swapScroll
+                        ColumnLayout {
                             anchors.fill: parent
-                            contentWidth: availableWidth
+                            spacing: 0
 
-                            ColumnLayout {
-                                id: swapForm
-                                objectName: "swapForm"
-                                width: swapScroll.availableWidth
-                                spacing: Theme.spacing.small
+                            LogosScrollView {
+                                id: swapScroll
+                                objectName: "swapScroll"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                contentWidth: availableWidth
+                                // Vertical only: a host design system whose horizontal bar is shown as needed
+                                // drew its empty handle as a stray dot at the bottom left.
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.horizontal.visible: false
 
-                                function request() {
-                                    var r = {
-                                        from: root.selected,
-                                        tokenIn: root.tokenWire(swapPage.sell),
-                                        tokenOut: root.tokenWire(swapPage.buy),
-                                        symbolIn: swapPage.sellSymbol,
-                                        symbolOut: swapPage.buySymbol,
-                                        decimalsIn: swapPage.sell && swapPage.sell.decimals !== undefined
-                                                    ? swapPage.sell.decimals : 18,
-                                        decimalsOut: swapPage.buy && swapPage.buy.decimals !== undefined
-                                                     ? swapPage.buy.decimals : 18,
-                                        amountUnits: sellCard.amountText.trim(),
-                                        tier: swapPage.tier,
-                                        slippageBps: root.slippageBps,
-                                        deadlineMins: root.deadlineMins
-                                    }
-                                    var o = advanced.overrides
-                                    if (o.maxFeePerGas !== undefined) {
-                                        r.maxFeePerGas = o.maxFeePerGas
-                                        r.maxPriorityFeePerGas = o.maxPriorityFeePerGas
-                                    }
-                                    if (o.gasLimits !== undefined) r.gasLimits = o.gasLimits
-                                    if (o.nonce !== undefined) r.nonce = o.nonce
-                                    return JSON.stringify(r)
-                                }
-                                readonly property string formRequest: request()
-                                onQChanged: {
-                                    if (q.ok !== true || q.calls === undefined) return
-                                    swapPage.calls = Math.max(1, q.calls.length)
-                                    swapPage.callLabels = q.calls.map(function (c) { return c.label || c.kind || "" })
-                                }
-                                readonly property var q: root.quoteRequest.length > 0
-                                                         && root.quoteRequest === swapForm.formRequest
-                                                         ? root.quote : ({})
-                                readonly property string state: root.swapState(
-                                    root.selected.length > 0, swapPage.sell, swapPage.buy,
-                                    sellCard.amountText.trim(), swapForm.q, root.quoteLoading,
-                                    root.ready ? root.backend.swapError : "", root.swapPending,
-                                    swapPage.impactAcknowledged)
-                                readonly property bool severe: q.priceImpactBps !== undefined
-                                    && q.priceImpactBps !== null && q.priceImpactBps >= root.severeImpactBps
-                                readonly property bool warn: q.priceImpactBps !== undefined
-                                    && q.priceImpactBps !== null && q.priceImpactBps >= root.warnImpactBps
+                                ColumnLayout {
+                                    id: swapForm
+                                    objectName: "swapForm"
+                                    width: swapScroll.availableWidth
+                                    spacing: Theme.spacing.small
 
-                                function reprice() { if (root.ready) root.backend.quote(swapForm.formRequest) }
-                                onFormRequestChanged: {
-                                    swapPage.impactAcknowledged = false
-                                    if (swapPage.visible) reprice()
-                                }
-
-                                SwapCard {
-                                    id: sellCard
-                                    objectName: "sellCard"
-                                    sideName: "sell"
-                                    heading: "Sell"
-                                    token: swapPage.sell
-                                    editable: true
-                                    onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
-                                    onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
-                                }
-                                // Swaps the two sides; the quoted output becomes the amount sold. A
-                                // plain down arrow in the full text colour on the raised pill, as
-                                // Uniswap's own: the old double chevron in secondary grey was all but
-                                // invisible on the dark page.
-                                LogosIconButton {
-                                    id: flipButton
-                                    objectName: "flipButton"
-                                    Layout.alignment: Qt.AlignHCenter
-                                    Layout.topMargin: -Theme.spacing.tiny
-                                    Layout.bottomMargin: -Theme.spacing.tiny
-                                    size: 36
-                                    iconSize: 20
-                                    iconSource: root.iconArrowDown
-                                    iconColor: Theme.palette.text
-                                    enabled: swapPage.sell !== null || swapPage.buy !== null
-                                    Accessible.name: "Swap sell and buy"
-                                    ToolTip.text: "Swap sell and buy"
-                                    ToolTip.visible: hovered
-                                    ToolTip.delay: 400
-                                    onClicked: swapPage.flip()
-                                }
-                                SwapCard {
-                                    id: buyCard
-                                    objectName: "buyCard"
-                                    sideName: "buy"
-                                    heading: "Buy"
-                                    token: swapPage.buy
-                                    editable: false
-                                    amountDisplay: swapForm.q.amountOutDisplay !== undefined
-                                                   ? String(swapForm.q.amountOutDisplay) : ""
-                                    onPickToken: { swapPage.picking = "buy"; tokenPicker.open() }
-                                }
-
-                                // The quote, framed: the rate, and everything under it.
-                                LogosFrame {
-                                    objectName: "quoteCard"
-                                    visible: swapForm.q.ok === true
-                                    Layout.fillWidth: true
-                                    contentItem: ColumnLayout {
-                                        spacing: Theme.spacing.tiny
-                                        LogosText {
-                                            objectName: "rateLine"
-                                            visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
-                                            Layout.fillWidth: true
-                                            textFormat: Text.PlainText
-                                            font.weight: Theme.typography.weightMedium
-                                            text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
+                                    function request() {
+                                        var r = {
+                                            from: root.selected,
+                                            tokenIn: root.tokenWire(swapPage.sell),
+                                            tokenOut: root.tokenWire(swapPage.buy),
+                                            symbolIn: swapPage.sellSymbol,
+                                            symbolOut: swapPage.buySymbol,
+                                            decimalsIn: swapPage.sell && swapPage.sell.decimals !== undefined
+                                                        ? swapPage.sell.decimals : 18,
+                                            decimalsOut: swapPage.buy && swapPage.buy.decimals !== undefined
+                                                         ? swapPage.buy.decimals : 18,
+                                            amountUnits: sellCard.amountText.trim(),
+                                            tier: swapPage.tier,
+                                            slippageBps: root.slippageBps,
+                                            deadlineMins: root.deadlineMins
                                         }
-                                        ColumnLayout {
-                                            objectName: "quoteDetails"
-                                            Layout.fillWidth: true
+                                        var o = advanced.overrides
+                                        if (o.maxFeePerGas !== undefined) {
+                                            r.maxFeePerGas = o.maxFeePerGas
+                                            r.maxPriorityFeePerGas = o.maxPriorityFeePerGas
+                                        }
+                                        if (o.gasLimits !== undefined) r.gasLimits = o.gasLimits
+                                        if (o.nonce !== undefined) r.nonce = o.nonce
+                                        return JSON.stringify(r)
+                                    }
+                                    readonly property string formRequest: request()
+                                    onQChanged: {
+                                        if (q.ok !== true || q.calls === undefined) return
+                                        swapPage.calls = Math.max(1, q.calls.length)
+                                        swapPage.callLabels = q.calls.map(function (c) { return c.label || c.kind || "" })
+                                    }
+                                    readonly property var q: root.quoteRequest.length > 0
+                                                             && root.quoteRequest === swapForm.formRequest
+                                                             ? root.quote : ({})
+                                    readonly property string state: root.swapState(
+                                        root.selected.length > 0, swapPage.sell, swapPage.buy,
+                                        sellCard.amountText.trim(), swapForm.q, root.quoteLoading,
+                                        root.ready ? root.backend.swapError : "", root.swapPending,
+                                        swapPage.impactAcknowledged)
+                                    readonly property bool severe: q.priceImpactBps !== undefined
+                                        && q.priceImpactBps !== null && q.priceImpactBps >= root.severeImpactBps
+                                    readonly property bool warn: q.priceImpactBps !== undefined
+                                        && q.priceImpactBps !== null && q.priceImpactBps >= root.warnImpactBps
+
+                                    function reprice() { if (root.ready) root.backend.quote(swapForm.formRequest) }
+                                    onFormRequestChanged: {
+                                        swapPage.impactAcknowledged = false
+                                        if (swapPage.visible) reprice()
+                                    }
+
+                                    SwapCard {
+                                        id: sellCard
+                                        objectName: "sellCard"
+                                        sideName: "sell"
+                                        heading: "Sell"
+                                        token: swapPage.sell
+                                        editable: true
+                                        onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
+                                        onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
+                                    }
+                                    // Swaps the two sides; the quoted output becomes the amount sold. A
+                                    // plain down arrow in the full text colour on the raised pill, as
+                                    // Uniswap's own: the old double chevron in secondary grey was all but
+                                    // invisible on the dark page.
+                                    LogosIconButton {
+                                        id: flipButton
+                                        objectName: "flipButton"
+                                        Layout.alignment: Qt.AlignHCenter
+                                        Layout.topMargin: -Theme.spacing.tiny
+                                        Layout.bottomMargin: -Theme.spacing.tiny
+                                        size: 36
+                                        iconSize: 20
+                                        iconSource: root.iconArrowDown
+                                        iconColor: Theme.palette.text
+                                        enabled: swapPage.sell !== null || swapPage.buy !== null
+                                        Accessible.name: "Swap sell and buy"
+                                        ToolTip.text: "Swap sell and buy"
+                                        ToolTip.visible: hovered
+                                        ToolTip.delay: 400
+                                        onClicked: swapPage.flip()
+                                    }
+                                    SwapCard {
+                                        id: buyCard
+                                        objectName: "buyCard"
+                                        sideName: "buy"
+                                        heading: "Buy"
+                                        token: swapPage.buy
+                                        editable: false
+                                        amountDisplay: swapForm.q.amountOutDisplay !== undefined
+                                                       ? String(swapForm.q.amountOutDisplay) : ""
+                                        onPickToken: { swapPage.picking = "buy"; tokenPicker.open() }
+                                    }
+
+                                    // The quote, framed: the rate, and everything under it.
+                                    LogosFrame {
+                                        objectName: "quoteCard"
+                                        visible: swapForm.q.ok === true
+                                        Layout.fillWidth: true
+                                        contentItem: ColumnLayout {
                                             spacing: Theme.spacing.tiny
-                                            DetailRow {
-                                                objectName: "minReceivedRow"
-                                                label: "Minimum received"
-                                                value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
-                                            }
-                                            DetailRow {
-                                                objectName: "impactRow"
-                                                label: "Price impact"
-                                                value: root.impactText(swapForm.q.priceImpactBps)
-                                                valueColor: swapForm.severe ? Theme.palette.error
-                                                          : swapForm.warn ? Theme.palette.warning : Theme.palette.text
-                                            }
-                                            DetailRow {
-                                                objectName: "routeRow"
-                                                label: "Route"
-                                                value: root.routeLine(swapForm.q.route)
-                                            }
-                                            DetailRow {
-                                                objectName: "feeTierRow"
-                                                label: "Pool fee"
-                                                value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
-                                            }
-                                            DetailRow {
-                                                objectName: "slippageRow"
-                                                label: "Max slippage"
-                                                value: (root.slippageBps / 100) + "%"
-                                            }
-                                            DetailRow {
-                                                objectName: "approvalRow"
-                                                visible: swapForm.q.needsApproval === true
-                                                label: "Approval"
-                                                value: swapForm.q.approval === "resetThenSet"
-                                                       ? "Reset and approve " + swapPage.sellSymbol + " first"
-                                                       : "Approve " + swapPage.sellSymbol + " first"
-                                            }
                                             LogosText {
-                                                objectName: "quoteRouteNote"
-                                                visible: root.verificationOn
+                                                objectName: "rateLine"
+                                                visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
                                                 Layout.fillWidth: true
-                                                wrapMode: Text.WordWrap
-                                                color: Theme.palette.textSecondary
-                                                font.pixelSize: Theme.typography.secondaryText
-                                                text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                                textFormat: Text.PlainText
+                                                font.weight: Theme.typography.weightMedium
+                                                text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
+                                            }
+                                            ColumnLayout {
+                                                objectName: "quoteDetails"
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacing.tiny
+                                                DetailRow {
+                                                    objectName: "minReceivedRow"
+                                                    label: "Minimum received"
+                                                    value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
+                                                }
+                                                DetailRow {
+                                                    objectName: "impactRow"
+                                                    label: "Price impact"
+                                                    value: root.impactText(swapForm.q.priceImpactBps)
+                                                    valueColor: swapForm.severe ? Theme.palette.error
+                                                              : swapForm.warn ? Theme.palette.warning : Theme.palette.text
+                                                }
+                                                DetailRow {
+                                                    objectName: "routeRow"
+                                                    label: "Route"
+                                                    value: root.routeLine(swapForm.q.route)
+                                                }
+                                                DetailRow {
+                                                    objectName: "feeTierRow"
+                                                    label: "Pool fee"
+                                                    value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
+                                                }
+                                                DetailRow {
+                                                    objectName: "slippageRow"
+                                                    label: "Max slippage"
+                                                    value: (root.slippageBps / 100) + "%"
+                                                }
+                                                DetailRow {
+                                                    objectName: "approvalRow"
+                                                    visible: swapForm.q.needsApproval === true
+                                                    label: "Approval"
+                                                    value: swapForm.q.approval === "resetThenSet"
+                                                           ? "Reset and approve " + swapPage.sellSymbol + " first"
+                                                           : "Approve " + swapPage.sellSymbol + " first"
+                                                }
+                                                LogosText {
+                                                    objectName: "quoteRouteNote"
+                                                    visible: root.verificationOn
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.WordWrap
+                                                    color: Theme.palette.textSecondary
+                                                    font.pixelSize: Theme.typography.secondaryText
+                                                    text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                // The fee, framed as the wallet's: Low / Market / Fast as radios with
-                                // what each tier pays per gas, what the sender priced, and the
-                                // Advanced disclosure.
-                                LogosFrame {
-                                    objectName: "feeCard"
-                                    Layout.fillWidth: true
-                                    contentItem: ColumnLayout {
-                                        spacing: Theme.spacing.small
-                                        RowLayout {
-                                            Layout.fillWidth: true
+                                    // The fee, framed as the wallet's: Low / Market / Fast as radios with
+                                    // what each tier pays per gas, what the sender priced, and the
+                                    // Advanced disclosure.
+                                    LogosFrame {
+                                        objectName: "feeCard"
+                                        Layout.fillWidth: true
+                                        contentItem: ColumnLayout {
                                             spacing: Theme.spacing.small
-                                            LogosText { text: "Fee"; font.weight: Theme.typography.weightBold }
-                                            LogosSpinner {
-                                                objectName: "feeTiersSpinner"
-                                                implicitWidth: 14
-                                                implicitHeight: 14
-                                                visible: root.feesPending
-                                                running: visible
-                                                ringColor: Theme.palette.textSecondary
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacing.small
+                                                LogosText { text: "Fee"; font.weight: Theme.typography.weightBold }
+                                                LogosSpinner {
+                                                    objectName: "feeTiersSpinner"
+                                                    implicitWidth: 14
+                                                    implicitHeight: 14
+                                                    visible: root.feesPending
+                                                    running: visible
+                                                    ringColor: Theme.palette.textSecondary
+                                                }
+                                                Item { Layout.fillWidth: true }
                                             }
-                                            Item { Layout.fillWidth: true }
-                                        }
-                                        SwapFeeTierPicker {
-                                            id: tierGroup
-                                            estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
-                                                          fast: root.tierEstimate("fast") })
-                                        }
-                                        // What the sender priced: the ceiling, each call's gas, the fees and nonces.
-                                        Kit.TxFeeSummary {
-                                            objectName: "swapFeeSummary"
-                                            visible: swapForm.q.ok === true
-                                            quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                            tier: swapPage.tier
-                                            calls: swapPage.calls
-                                            nativeSymbol: root.nativeSymbol
-                                        }
-                                        // The disclosure says what it opens. It drives the kit's own
-                                        // fields, whose bare "Advanced" box is hidden under it.
-                                        FrameCheckbox {
-                                            objectName: "swapAdvancedToggle"
-                                            text: "Advanced: slippage, deadline, gas and nonce"
-                                            checkable: false
-                                            checked: advanced.open
-                                            onClicked: advanced.open = !advanced.open
-                                        }
-                                        SwapPrefs {
-                                            prefix: "advanced"
-                                            visible: advanced.open
-                                            Layout.fillWidth: true
-                                        }
-                                        Kit.TxAdvancedFields {
-                                            id: advanced
-                                            quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                            calls: swapPage.calls
-                                            callLabels: swapPage.callLabels
-                                            Component.onCompleted: {
-                                                for (var i = 0; i < children.length; ++i)
-                                                    if (children[i].objectName === "advancedToggle") children[i].visible = false
+                                            SwapFeeTierPicker {
+                                                id: tierGroup
+                                                estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
+                                                              fast: root.tierEstimate("fast") })
+                                            }
+                                            // What the sender priced: the ceiling, each call's gas, the fees and nonces.
+                                            Kit.TxFeeSummary {
+                                                objectName: "swapFeeSummary"
+                                                visible: swapForm.q.ok === true
+                                                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                                tier: swapPage.tier
+                                                calls: swapPage.calls
+                                                nativeSymbol: root.nativeSymbol
+                                            }
+                                            // The disclosure says what it opens. It drives the kit's own
+                                            // fields, whose bare "Advanced" box is hidden under it.
+                                            FrameCheckbox {
+                                                objectName: "swapAdvancedToggle"
+                                                text: "Advanced: slippage, deadline, gas and nonce"
+                                                checkable: false
+                                                checked: advanced.open
+                                                onClicked: advanced.open = !advanced.open
+                                            }
+                                            SwapPrefs {
+                                                prefix: "advanced"
+                                                visible: advanced.open
+                                                Layout.fillWidth: true
+                                            }
+                                            Kit.TxAdvancedFields {
+                                                id: advanced
+                                                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                                                calls: swapPage.calls
+                                                callLabels: swapPage.callLabels
+                                                Component.onCompleted: {
+                                                    for (var i = 0; i < children.length; ++i)
+                                                        if (children[i].objectName === "advancedToggle") children[i].visible = false
+                                                }
                                             }
                                         }
                                     }
-                                }
 
-                                LogosText {
-                                    objectName: "quotePricingNote"
-                                    visible: root.quoteLoading && swapForm.q.ok !== true
-                                    color: Theme.palette.textSecondary
-                                    text: "Pricing…"
+                                    LogosText {
+                                        objectName: "quotePricingNote"
+                                        visible: root.quoteLoading && swapForm.q.ok !== true
+                                        color: Theme.palette.textSecondary
+                                        text: "Pricing…"
+                                    }
+                                    LogosText {
+                                        objectName: "quoteStaleNote"
+                                        visible: root.quoteStale && swapForm.q.ok === true
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.warning
+                                        text: "The quote could not be refreshed. The swap is re-quoted when you confirm it."
+                                    }
+                                    LogosText {
+                                        objectName: "impactWarning"
+                                        visible: swapForm.severe
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.error
+                                        text: "This swap moves the price by " + root.impactText(swapForm.q.priceImpactBps)
+                                              + ". You would receive much less than the current rate."
+                                    }
+                                    LogosCheckbox {
+                                        id: impactCheck
+                                        objectName: "impactAcknowledge"
+                                        visible: swapForm.severe
+                                        text: "I understand the price impact"
+                                        checked: swapPage.impactAcknowledged
+                                        onToggled: swapPage.impactAcknowledged = checked
+                                    }
+                                    LogosText {
+                                        objectName: "swapErrorLabel"
+                                        visible: text.length > 0
+                                        Layout.fillWidth: true
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.error
+                                        text: root.swapPageError
+                                    }
+                                    // Room under the last card, so it never sits flush on the action bar.
+                                    Item { implicitHeight: Theme.spacing.small }
                                 }
-                                LogosText {
-                                    objectName: "quoteStaleNote"
-                                    visible: root.quoteStale && swapForm.q.ok === true
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.warning
-                                    text: "The quote could not be refreshed. The swap is re-quoted when you confirm it."
-                                }
-                                LogosText {
-                                    objectName: "impactWarning"
-                                    visible: swapForm.severe
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.error
-                                    text: "This swap moves the price by " + root.impactText(swapForm.q.priceImpactBps)
-                                          + ". You would receive much less than the current rate."
-                                }
-                                LogosCheckbox {
-                                    id: impactCheck
-                                    objectName: "impactAcknowledge"
-                                    visible: swapForm.severe
-                                    text: "I understand the price impact"
-                                    checked: swapPage.impactAcknowledged
-                                    onToggled: swapPage.impactAcknowledged = checked
-                                }
-                                LogosText {
-                                    objectName: "swapErrorLabel"
-                                    visible: text.length > 0
-                                    Layout.fillWidth: true
-                                    textFormat: Text.PlainText
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.error
-                                    text: root.swapPageError
-                                }
+                            }
 
-                                // The page's one primary action, always named "Review swap"; while it
-                                // is off, the reason is beside it.
+                            // The page's one primary action, pinned under the form: always named "Review swap", the
+                            // reason beside it while it is off. However long the quote and the fee make the form,
+                            // the button stays on screen and the form scrolls above it.
+                            Rectangle {
+                                id: swapActionBar
+                                objectName: "swapActionBar"
+                                Layout.fillWidth: true
+                                implicitHeight: swapActionRow.implicitHeight + Theme.spacing.medium
+                                color: Theme.palette.background
+                                // A hairline over it, where the form scrolls under.
+                                Rectangle {
+                                    anchors.top: parent.top
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    height: Theme.size.borderWidth
+                                    color: Theme.palette.border
+                                }
                                 RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.topMargin: Theme.spacing.small
+                                    id: swapActionRow
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
                                     spacing: Theme.spacing.small
                                     LogosText {
                                         id: swapReasonLabel
@@ -1578,6 +1609,8 @@ Item {
                             id: settingsScroll
                             anchors.fill: parent
                             contentWidth: availableWidth
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ScrollBar.horizontal.visible: false
                             ColumnLayout {
                                 width: settingsScroll.availableWidth
                                 spacing: Theme.spacing.small
@@ -1644,6 +1677,8 @@ Item {
             LogosScrollView {
                 anchors.fill: parent
                 contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.horizontal.visible: false
                 ColumnLayout {
                     width: parent.width
                     spacing: Theme.spacing.small
