@@ -46,6 +46,7 @@ Item {
     // Confirm is answered, and shows it itself; the page's line shows only what the page did:
     // never while a sheet is up, and never an error already on screen when one opened or closed.
     readonly property bool sheetUp: reviewDialog.visible || networkSheet.visible || tokenPicker.visible
+                                    || feeSheet.visible || slippageSheet.visible
     property string swapErrorSeen: ""
     onSheetUpChanged: root.swapErrorSeen = root.ready ? root.backend.swapError : ""
     readonly property string swapPageError:
@@ -275,6 +276,36 @@ Item {
     readonly property url iconTriangleDown: Qt.resolvedUrl("assets/triangle-down.svg")
     readonly property url iconRefresh: Qt.resolvedUrl("assets/refresh.svg")
     readonly property url iconArrowDown: Qt.resolvedUrl("assets/arrow-down.svg")
+    // LogosIcons has no pencil yet: Remix pencil-line, bundled with the other app icons.
+    readonly property url iconEdit: Qt.resolvedUrl("assets/edit.svg")
+
+    // The Swap tab's one line on the fee and slippage. The fee reads the chosen tier and what
+    // it pays per gas at most, or "Custom" with the max fee the Fee sheet's override set.
+    readonly property string feeSummaryText: {
+        var o = advanced.overrides
+        if (o.maxFeePerGas !== undefined) {
+            var c = root.gweiCeiling(o.maxFeePerGas)
+            return "Fee: Custom" + (c.length ? " " + c : "")
+        }
+        var e = root.tierEstimate(swapPage.tier)
+        return "Fee: " + Fees.tierName(swapPage.tier) + (e.length ? " " + e : "")
+    }
+    readonly property string slippageSummaryText:
+        "Max slippage: " + (root.settings.autoSlippage === true ? "Auto " : "Custom ") + (root.slippageBps / 100) + "%"
+
+    // A pencil beside a summary: a 32px ghost button in secondary grey, full text on hover.
+    component EditIcon: LogosIconButton {
+        property string tip: ""
+        size: 32
+        iconSize: 16
+        flat: true
+        iconSource: root.iconEdit
+        iconColor: isActive ? Theme.palette.text : Theme.palette.textSecondary
+        Accessible.name: tip
+        ToolTip.text: tip
+        ToolTip.visible: hovered
+        ToolTip.delay: 400
+    }
 
     // The design system's radio and checkbox draw an unselected ring in `border` over a `surface`
     // fill: on a framed card, itself `surface`, the ring all but vanishes. Inside a frame these
@@ -706,15 +737,24 @@ Item {
         }
     }
 
-    // Max slippage and the transaction deadline: in Settings, and under the Fee block's
-    // Advanced. `prefix` keeps the two copies' objectNames apart ("" in Settings).
+    // Max slippage and the transaction deadline: in Settings, and in the Swap tab's Max slippage
+    // sheet. Both copies read and write the same settings. `prefix` keeps their objectNames
+    // apart ("" in Settings).
     component SwapPrefs: ColumnLayout {
         id: prefs
         property string prefix: ""
+        // Off in the Max slippage sheet, whose title already says it.
+        property bool heading: true
         function nm(n) { return prefix.length ? prefix + n.charAt(0).toUpperCase() + n.slice(1) : n }
+        // A sheet closed with a field still focused never saw it finish: closing applies both.
+        function applyFields() {
+            if (slippageField.text.trim().length) slippageField.apply()
+            deadlineField.apply()
+        }
         spacing: Theme.spacing.small
 
         LogosText {
+            visible: prefs.heading
             text: "Max slippage"
             font.weight: Theme.typography.weightMedium
         }
@@ -746,6 +786,7 @@ Item {
                 function apply() {
                     var pct = parseFloat(text)
                     if (isNaN(pct) || !root.ready) return
+                    if (root.settings.autoSlippage !== true && Math.round(pct * 100) === root.slippageBps) return
                     root.backend.setSettings(JSON.stringify({ autoSlippage: false,
                                                               slippageBps: Math.round(pct * 100) }))
                 }
@@ -781,7 +822,7 @@ Item {
                 text: root.deadlineMins.toString()
                 function apply() {
                     var m = parseInt(text)
-                    if (isNaN(m) || !root.ready) return
+                    if (isNaN(m) || !root.ready || m === root.deadlineMins) return
                     root.backend.setSettings(JSON.stringify({ deadlineMins: m }))
                 }
                 Connections {
@@ -1502,18 +1543,21 @@ Item {
                                         }
                                     }
 
-                                    // The fee, framed as the wallet's: Low / Market / Fast as radios with
-                                    // what each tier pays per gas, what the sender priced, and the
-                                    // Advanced disclosure.
+                                    // The fee and the slippage, one framed line: what each is now, and a
+                                    // pencil that opens its sheet. The tiers, the sender's figures and the
+                                    // overrides are in the Fee sheet; slippage and the deadline in theirs.
                                     LogosFrame {
                                         objectName: "feeCard"
                                         Layout.fillWidth: true
-                                        contentItem: ColumnLayout {
-                                            spacing: Theme.spacing.small
+                                        contentItem: Flow {
+                                            spacing: Theme.spacing.large
                                             RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: Theme.spacing.small
-                                                LogosText { text: "Fee"; font.weight: Theme.typography.weightBold }
+                                                spacing: Theme.spacing.tiny
+                                                LogosText {
+                                                    objectName: "feeSummary"
+                                                    textFormat: Text.PlainText
+                                                    text: root.feeSummaryText
+                                                }
                                                 LogosSpinner {
                                                     objectName: "feeTiersSpinner"
                                                     implicitWidth: 14
@@ -1522,44 +1566,23 @@ Item {
                                                     running: visible
                                                     ringColor: Theme.palette.textSecondary
                                                 }
-                                                Item { Layout.fillWidth: true }
+                                                EditIcon {
+                                                    objectName: "feeEditButton"
+                                                    tip: "Change the fee"
+                                                    onClicked: feeSheet.open()
+                                                }
                                             }
-                                            SwapFeeTierPicker {
-                                                id: tierGroup
-                                                estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
-                                                              fast: root.tierEstimate("fast") })
-                                            }
-                                            // What the sender priced: the ceiling, each call's gas, the fees and nonces.
-                                            Kit.TxFeeSummary {
-                                                objectName: "swapFeeSummary"
-                                                visible: swapForm.q.ok === true
-                                                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                                tier: swapPage.tier
-                                                calls: swapPage.calls
-                                                nativeSymbol: root.nativeSymbol
-                                            }
-                                            // The disclosure says what it opens. It drives the kit's own
-                                            // fields, whose bare "Advanced" box is hidden under it.
-                                            FrameCheckbox {
-                                                objectName: "swapAdvancedToggle"
-                                                text: "Advanced: slippage, deadline, gas and nonce"
-                                                checkable: false
-                                                checked: advanced.open
-                                                onClicked: advanced.open = !advanced.open
-                                            }
-                                            SwapPrefs {
-                                                prefix: "advanced"
-                                                visible: advanced.open
-                                                Layout.fillWidth: true
-                                            }
-                                            Kit.TxAdvancedFields {
-                                                id: advanced
-                                                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                                calls: swapPage.calls
-                                                callLabels: swapPage.callLabels
-                                                Component.onCompleted: {
-                                                    for (var i = 0; i < children.length; ++i)
-                                                        if (children[i].objectName === "advancedToggle") children[i].visible = false
+                                            RowLayout {
+                                                spacing: Theme.spacing.tiny
+                                                LogosText {
+                                                    objectName: "slippageSummary"
+                                                    textFormat: Text.PlainText
+                                                    text: root.slippageSummaryText
+                                                }
+                                                EditIcon {
+                                                    objectName: "slippageEditButton"
+                                                    tip: "Change max slippage"
+                                                    onClicked: slippageSheet.open()
                                                 }
                                             }
                                         }
@@ -1642,7 +1665,10 @@ Item {
                                         textFormat: Text.PlainText
                                         wrapMode: Text.WordWrap
                                         color: Theme.palette.textSecondary
-                                        text: root.swapReason(swapForm.state)
+                                        // An override the Fee sheet refuses holds the button; the
+                                        // sheet says why, this only where to look.
+                                        text: swapForm.state === "ready" && advanced.error.length > 0
+                                              ? "Fix the fee you set" : root.swapReason(swapForm.state)
                                     }
                                     Item { Layout.fillWidth: true; visible: !swapReasonLabel.visible }
                                     LogosSpinner {
@@ -2031,6 +2057,95 @@ Item {
             }
             Repeater { model: root.testnetChains; delegate: NetworkChoice {} }
         }
+    }
+
+    // ── the Fee and Max slippage sheets, opened from the Swap tab's summary line ────
+    // The Fee sheet: Low / Market / Fast as radios with what each tier pays per gas, what the
+    // sender priced (the ceiling, each call's gas, the fees, the nonces, the fee basis), and
+    // the overrides. Each change re-quotes at once, and the summary line follows it; a fee the
+    // sender refused, or an override it would, is said here and nowhere else.
+    LogosDialog {
+        id: feeSheet
+        objectName: "feeSheet"
+        title: "Fee"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
+        body: ColumnLayout {
+            spacing: Theme.spacing.medium
+            SwapFeeTierPicker {
+                id: tierGroup
+                Layout.fillWidth: true
+                estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
+                              fast: root.tierEstimate("fast") })
+            }
+            Kit.TxFeeSummary {
+                objectName: "swapFeeSummary"
+                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                tier: swapPage.tier
+                calls: swapPage.calls
+                nativeSymbol: root.nativeSymbol
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacing.tiny
+                LogosText {
+                    text: "Set your own"
+                    font.weight: Theme.typography.weightMedium
+                }
+                LogosText {
+                    objectName: "feeOverridesNote"
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Theme.palette.textSecondary
+                    font.pixelSize: Theme.typography.secondaryText
+                    text: "Max fee, priority fee, gas limit and nonce. Left empty, the quote's figures are used."
+                }
+            }
+            // The kit's fields, always open here: its bare "Advanced" box is hidden.
+            Kit.TxAdvancedFields {
+                id: advanced
+                open: true
+                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                calls: swapPage.calls
+                callLabels: swapPage.callLabels
+                Component.onCompleted: {
+                    for (var i = 0; i < children.length; ++i)
+                        if (children[i].objectName === "advancedToggle") children[i].visible = false
+                }
+            }
+        }
+        rightActions: [
+            LogosButton {
+                objectName: "feeSheetDone"
+                variant: LogosButton.Variant.Primary
+                text: "Done"
+                onClicked: feeSheet.close()
+            }
+        ]
+    }
+    // The Max slippage sheet: the same settings as the Settings tab, read and written alike.
+    LogosDialog {
+        id: slippageSheet
+        objectName: "slippageSheet"
+        title: "Max slippage"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
+        onClosed: sheetPrefs.applyFields()
+        body: SwapPrefs {
+            id: sheetPrefs
+            prefix: "sheet"
+            heading: false
+        }
+        rightActions: [
+            LogosButton {
+                objectName: "slippageSheetDone"
+                variant: LogosButton.Variant.Primary
+                text: "Done"
+                onClicked: slippageSheet.close()
+            }
+        ]
     }
 
     // ── the token picker ─────────────────────────────────────────────────────────

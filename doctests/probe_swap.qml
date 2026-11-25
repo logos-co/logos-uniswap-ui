@@ -52,6 +52,10 @@ Item {
         var hit = (d && d.contentItem) ? find(d.contentItem, name) : null
         return hit || ({ text: "<missing>", visible: "<missing>", value: "<missing>" })
     }
+    // Typing, as a person does: through the input, so the field's binding to the setting stays.
+    function typeInto(f, t) { var i = f.textInput; i.remove(0, i.length); i.insert(0, t) }
+    function inFee(name) { return inDialog("feeSheet", name) }
+    function inSlippage(name) { return inDialog("slippageSheet", name) }
 
     readonly property var ethToken: ({ symbol: "ETH", name: "Ether", decimals: 18, native: true })
     readonly property var usdcToken: ({ symbol: "USDC", name: "USD Coin", decimals: 6, address: probe.usdc, source: "allowlist" })
@@ -118,7 +122,12 @@ Item {
         function loadMoreCatalogue() {}
         function quote(r) { var l = probe.quoted; l.push(r); probe.quoted = l }
         function setQuoteAutoRefresh(on) {}
-        function setSettings(j) {}
+        // As the backend: a change merges into the published settings, which both copies read.
+        function setSettings(j) {
+            var cur = JSON.parse(fake.settingsJson), ch = JSON.parse(j)
+            for (var k in ch) cur[k] = ch[k]
+            fake.settingsJson = JSON.stringify(cur)
+        }
         function submitSwap(r) {}
         function pollSwap() {}
         function cancelSwap() {}
@@ -293,36 +302,56 @@ Item {
             check("the route", probe.node("routeRow").value, "Uniswap V3 0.05%")
             check("the pool fee", probe.node("feeTierRow").value, "0.05%")
             check("the approval, said before it is asked", probe.node("approvalRow").value, "Approve USDC first")
-            check("the fee is a ceiling, never a price", probe.node("feeRow").value, "at most 0.0004 ETH (Market)")
+            check("the fee is a ceiling, never a price", probe.inFee("feeRow").value, "at most 0.0004 ETH (Market)")
             check("priced: no reason beside the button", probe.node("swapReason").text, "")
             check("...enabled", probe.node("swapButton").enabled, true)
 
             console.log("")
-            console.log("the sender's figures, as the wallet shows them: each call's gas and nonce")
-            check("each call's gas limit", probe.node("gasLimitRow").value, "46000 + 180000")
-            check("the max fee, in gwei", probe.node("maxFeeRow").value, "1.7 gwei")
-            check("the nonces the two calls take", probe.node("nonceRow").value, "7, 8")
+            console.log("one summary line under the quote: the fee and the slippage, each with a pencil")
+            var feeCard = probe.node("feeCard"), quoteCard = probe.node("quoteCard")
+            check("the line is framed, under the quote", feeCard.y > quoteCard.y && feeCard.background !== null, true)
+            check("it reads the tier and what it pays per gas", probe.node("feeSummary").text, "Fee: Market ≤ 1.7 gwei")
+            check("...and the slippage mode and figure", probe.node("slippageSummary").text, "Max slippage: Auto 0.5%")
+            check("the fee pencil is a small icon button", probe.node("feeEditButton").size + "/" + probe.node("feeEditButton").flat, "32/true")
+            check("...the design's pencil", String(probe.node("feeEditButton").iconSource).indexOf("edit.svg") > 0, true)
+            check("...saying what it does", probe.node("feeEditButton").tip, "Change the fee")
+            check("...and so does the slippage one", probe.node("slippageEditButton").tip, "Change max slippage")
+            check("no Advanced box on the Swap tab any more", probe.node("swapAdvancedToggle").visible, "<missing>")
+            check("...nor the tier radios", probe.node("tierNormal").visible, "<missing>")
+            check("the line is one row at this width", feeCard.contentItem.height < 2 * probe.node("feeEditButton").height + 4, true)
+
             console.log("")
-            console.log("the Fee block: the wallet's radios, each with what its tier pays per gas")
-            check("Market is the tier on", probe.node("tierNormal").checked, true)
-            check("...a radio, not a second primary button", probe.node("tierNormal").variant, undefined)
-            var card = probe.node("feeCard"), low = probe.node("tierSlow")
-            check("an unselected ring stands off the framed card: its fill is not the card's",
-                  String(low.indicatorItem.color) !== String(card.backgroundColor), true)
-            check("...and its ring is the tertiary grey, not the card's border",
-                  String(low.indicatorItem.border.color) !== String(card.borderColor)
+            console.log("the fee pencil opens the Fee sheet: the tiers, the sender's figures, the overrides")
+            var feeSheet = probe.find(v, "feeSheet")
+            check("closed to begin with", feeSheet.visible, false)
+            probe.node("feeEditButton").clicked()
+            check("the pencil opens it", feeSheet.visible, true)
+            check("...titled Fee", feeSheet.title, "Fee")
+            check("...holding back the page's error line", v.sheetUp, true)
+            check("each call's gas limit", probe.inFee("gasLimitRow").value, "46000 + 180000")
+            check("the max fee, in gwei", probe.inFee("maxFeeRow").value, "1.7 gwei")
+            check("the nonces the two calls take", probe.inFee("nonceRow").value, "7, 8")
+            check("the network fee ceiling", probe.inFee("feeRow").value, "at most 0.0004 ETH (Market)")
+            check("the fee basis", probe.inFee("feeSourceLabel").text, "Fee basis: eip1559")
+            check("Market is the tier on", probe.inFee("tierNormal").checked, true)
+            check("...a radio, not a second primary button", probe.inFee("tierNormal").variant, undefined)
+            var low = probe.inFee("tierSlow")
+            check("an unselected ring stands off the sheet: its fill is not the sheet's",
+                  String(low.indicatorItem.color) !== String(feeSheet.backgroundColor), true)
+            check("...and its ring is the tertiary grey, not the sheet's border",
+                  String(low.indicatorItem.border.color) !== String(feeSheet.borderColor)
                   && String(low.indicatorItem.border.color) === String(low.borderColor), true)
-            check("...as is the Advanced box beside it",
-                  String(probe.node("swapAdvancedToggle").boxColor) !== String(card.backgroundColor), true)
-            check("no estimate where fee_module named none", probe.node("tierSlowEstimate").visible, false)
+            check("no estimate where fee_module named none", probe.inFee("tierSlowEstimate").visible, false)
             check("...but the chosen tier reads the live quote, the same figure as Max fee",
-                  probe.node("tierNormalEstimate").text, "≤ 1.7 gwei")
+                  probe.inFee("tierNormalEstimate").text, "≤ 1.7 gwei")
+            check("the overrides are open, without the kit's bare Advanced box",
+                  probe.inFee("maxFeeField").visible + "/" + probe.inFee("advancedToggle").visible, "true/false")
             fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
                 tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
                          fast: { maxFeePerGas: "2500000000" } } })
-            check("Low's ceiling per gas", probe.node("tierSlowEstimate").text, "≤ 1.2 gwei")
-            check("Market's", probe.node("tierNormalEstimate").text, "≤ 1.7 gwei")
-            check("Fast's", probe.node("tierFastEstimate").text, "≤ 2.5 gwei")
+            check("Low's ceiling per gas", probe.inFee("tierSlowEstimate").text, "≤ 1.2 gwei")
+            check("Market's", probe.inFee("tierNormalEstimate").text, "≤ 1.7 gwei")
+            check("Fast's", probe.inFee("tierFastEstimate").text, "≤ 2.5 gwei")
             console.log("")
             console.log("Sepolia as fee_module saw it: a 15 wei base fee, tips of 2 wei or about 1 gwei")
             fake.feeTiersJson = JSON.stringify({ ok: true, chainId: 11155111, baseFeePerGas: "15", source: "feeHistory",
@@ -331,67 +360,96 @@ Item {
                          fast: { maxFeePerGas: "1000000032", maxPriorityFeePerGas: "999999987" } } })
             probe.publishQuote({ fee: { ok: true, feeCeilingWeiDisplay: "0.0001", nativeSymbol: "ETH", feeSource: "feeHistory",
                                         maxFeePerGas: "550000030", maxPriorityFeePerGas: "550000000", gasLimit: 226000 } })
-            check("a few wei reads as under a hundredth of a gwei, not 0.000000034", probe.node("tierSlowEstimate").text, "< 0.01 gwei")
-            check("the chosen tier is the quote's, matching Max fee below it", probe.node("tierNormalEstimate").text, "≤ 0.55 gwei")
-            check("...which says the exact figure", probe.node("maxFeeRow").value, "0.55000003 gwei")
-            check("a gwei and 32 wei reads as at most 1 gwei", probe.node("tierFastEstimate").text, "≤ 1 gwei")
+            check("a few wei reads as under a hundredth of a gwei, not 0.000000034", probe.inFee("tierSlowEstimate").text, "< 0.01 gwei")
+            check("the chosen tier is the quote's, matching Max fee below it", probe.inFee("tierNormalEstimate").text, "≤ 0.55 gwei")
+            check("...which says the exact figure", probe.inFee("maxFeeRow").value, "0.55000003 gwei")
+            check("...and so does the summary line", probe.node("feeSummary").text, "Fee: Market ≤ 0.55 gwei")
+            check("a gwei and 32 wei reads as at most 1 gwei", probe.inFee("tierFastEstimate").text, "≤ 1 gwei")
             check("three significant digits, rounded up past a tenth of a percent", v.gweiCeiling("1234567890"), "≤ 1.24 gwei")
             check("...and kept when the rounding is a hair under", v.gweiCeiling("1230000500"), "≤ 1.23 gwei")
             check("a fee the user set leaves the chosen tier on fee_module's figure",
                   (function () { probe.publishQuote({ fee: { ok: true, feeSource: "custom", maxFeePerGas: "9000000000",
                                                              maxPriorityFeePerGas: "1" } })
-                                 return probe.node("tierNormalEstimate").text })(), "< 0.01 gwei")
+                                 return probe.inFee("tierNormalEstimate").text })(), "< 0.01 gwei")
             check("anything but wei reads as nothing", v.gweiCeiling("1.5"), "")
             fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
                 tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
                          fast: { maxFeePerGas: "2500000000" } } })
             probe.publishQuote({})
-            probe.node("tierFast").clicked()
+            var asked = probe.quoted.length
+            probe.inFee("tierFast").clicked()
             check("a click picks the tier", page.tier, "fast")
-            check("...and the request carries it", JSON.parse(probe.quoted[probe.quoted.length - 1]).tier, "fast")
-            probe.node("tierNormal").clicked()
-            probe.publishQuote({})
-            check("one primary button on the page: the action", probe.primaries(page), 1)
-            console.log("")
-            console.log("the action bar is pinned under the form, which scrolls above it")
-            var bar = probe.node("swapActionBar"), scroll = probe.node("swapScroll")
-            probe.node("swapAdvancedToggle").clicked()
-            check("the form lives in the scroll view, not beside the bar",
-                  probe.node("swapForm").parent === scroll.contentItem.contentItem
-                  || probe.node("swapForm").parent.parent === scroll.contentItem, true)
-            check("with the quote, the fee and Advanced open, the bar ends at the page's foot", Math.round(bar.mapToItem(page, 0, bar.height).y), Math.round(page.height))
-            check("...with Review swap inside the page", probe.node("swapButton").mapToItem(page, 0, probe.node("swapButton").height).y <= page.height, true)
-            check("...and the reason in the bar beside it", probe.node("swapReason").parent.parent === bar, true)
-            check("the form scrolls in the space above the bar", Math.round(scroll.height + bar.height), Math.round(page.height))
-            probe.node("swapAdvancedToggle").clicked()
-            check("the kit's bare Advanced box is hidden under the disclosure", probe.node("advancedToggle").visible, false)
-            check("the disclosure says what it opens", probe.node("swapAdvancedToggle").text,
-                  "Advanced: slippage, deadline, gas and nonce")
-            probe.node("swapAdvancedToggle").clicked()
-            check("it opens the kit's fields", probe.node("advancedToggle").checked, true)
-            check("...and slippage and the deadline", probe.node("advancedDeadlineField").visible, true)
-            check("...at their values", probe.node("advancedDeadlineField").text, "30")
-            probe.node("swapAdvancedToggle").clicked()
-            check("and closes them", probe.node("advancedDeadlineField").visible, false)
+            check("...and re-quotes with it", probe.quoted.length > asked && JSON.parse(probe.quoted[probe.quoted.length - 1]).tier === "fast", true)
+            check("...and the summary line follows", probe.node("feeSummary").text, "Fee: Fast ≤ 2.5 gwei")
+            check("the sheet's one action is Done, primary", feeSheet.rightActions.length + " " + feeSheet.rightActions[0].text + " "
+                  + feeSheet.rightActions[0].variant + " " + probe.primaries(feeSheet.contentItem), "1 Done 0 0")
 
             console.log("")
-            console.log("and the Advanced section this app did not have")
-            probe.node("advancedToggle").checked = true
-            check("a gas limit per call, named for it", probe.node("gasLimitField_1").placeholderText,
+            console.log("the overrides, in the Fee sheet")
+            check("a gas limit per call, named for it", probe.inFee("gasLimitField_1").placeholderText,
                   "Swap USDC for ETH on Uniswap V3: gas limit (estimated 180000)")
-            check("two transactions cannot be pinned to one nonce", probe.node("nonceField").readOnly, true)
-            probe.node("gasLimitField_1").text = "250000"
-            probe.node("maxPriorityFeeField").text = "2000000000"
+            check("two transactions cannot be pinned to one nonce", probe.inFee("nonceField").readOnly, true)
+            probe.inFee("gasLimitField_1").text = "250000"
+            probe.inFee("maxPriorityFeeField").text = "2000000000"
             var custom = JSON.parse(probe.quoted[probe.quoted.length - 1])
             check("the swap's own limit goes out, the approval's left estimated", JSON.stringify(custom.gasLimits),
                   JSON.stringify([null, "250000"]))
             check("the tip as typed, with the max fee the quote suggested", custom.maxPriorityFeePerGas + " / " + custom.maxFeePerGas,
                   "2000000000 / 1700000000")
             check("and no nonce", custom.nonce, undefined)
-            probe.node("gasLimitField_1").text = ""
-            probe.node("maxPriorityFeeField").text = ""
-            probe.node("advancedToggle").checked = false
+            check("a fee set by hand reads Custom on the line", probe.node("feeSummary").text, "Fee: Custom ≤ 1.7 gwei")
+            probe.inFee("gasLimitField_1").text = "12x"
+            check("a field the sender would refuse is said in the sheet", probe.inFee("advancedError").text, "Gas limit 2 must be a whole number")
             probe.publishQuote({})
+            check("...the button held", probe.node("swapButton").enabled, false)
+            check("...and the reason says where to look, not the error itself", probe.node("swapReason").text, "Fix the fee you set")
+            check("...which is not on the page's error line", probe.node("swapErrorLabel").visible, false)
+            probe.inFee("gasLimitField_1").text = ""
+            probe.inFee("maxPriorityFeeField").text = ""
+            probe.inFee("tierNormal").clicked()
+            feeSheet.rightActions[0].clicked()
+            check("Done closes the sheet", feeSheet.visible, false)
+            check("...and the line is back on the tier", probe.node("feeSummary").text, "Fee: Market ≤ 1.7 gwei")
+            probe.publishQuote({})
+
+            console.log("")
+            console.log("the slippage pencil opens the Max slippage sheet, on the Settings tab's values")
+            var slipSheet = probe.find(v, "slippageSheet")
+            probe.node("slippageEditButton").clicked()
+            check("the pencil opens it", slipSheet.visible, true)
+            check("...titled Max slippage", slipSheet.title, "Max slippage")
+            check("...not the Fee sheet", feeSheet.visible, false)
+            check("Auto is on, as in Settings", probe.inSlippage("sheetSlippageAuto").checked, true)
+            check("...with the deadline", probe.inSlippage("sheetDeadlineField").text, "30")
+            asked = probe.quoted.length
+            probe.typeInto(probe.inSlippage("sheetSlippageField"), "1")
+            probe.typeInto(probe.inSlippage("sheetDeadlineField"), "20")
+            slipSheet.rightActions[0].clicked()
+            check("Done closes it", slipSheet.visible, false)
+            check("closing applies the fields: the line reads the custom figure", probe.node("slippageSummary").text, "Max slippage: Custom 1%")
+            check("...the quote's row too", probe.node("slippageRow").value, "1%")
+            var rq = JSON.parse(probe.quoted[probe.quoted.length - 1])
+            check("...and it re-quoted with both", (probe.quoted.length > asked) + " " + rq.slippageBps + " " + rq.deadlineMins, "true 100 20")
+            check("the Settings tab reads the same values", probe.node("slippageField").text + "/" + probe.node("deadlineField").text, "1/20")
+            probe.node("slippageAuto").clicked()
+            check("and a change in Settings shows on the line", probe.node("slippageSummary").text, "Max slippage: Auto 0.5%")
+            check("...and in the sheet", probe.inSlippage("sheetSlippageAuto").checked, true)
+            probe.typeInto(probe.node("deadlineField"), "30")
+            probe.node("deadlineField").apply()
+            check("...the deadline too", probe.inSlippage("sheetDeadlineField").text, "30")
+            probe.publishQuote({})
+            check("one primary button on the page: the action", probe.primaries(page), 1)
+
+            console.log("")
+            console.log("the action bar is pinned under the form, which scrolls above it")
+            var bar = probe.node("swapActionBar"), scroll = probe.node("swapScroll")
+            check("the form lives in the scroll view, not beside the bar",
+                  probe.node("swapForm").parent === scroll.contentItem.contentItem
+                  || probe.node("swapForm").parent.parent === scroll.contentItem, true)
+            check("with the quote and the fee line, the bar ends at the page's foot", Math.round(bar.mapToItem(page, 0, bar.height).y), Math.round(page.height))
+            check("...with Review swap inside the page", probe.node("swapButton").mapToItem(page, 0, probe.node("swapButton").height).y <= page.height, true)
+            check("...and the reason in the bar beside it", probe.node("swapReason").parent.parent === bar, true)
+            check("the form scrolls in the space above the bar", Math.round(scroll.height + bar.height), Math.round(page.height))
 
             console.log("")
             console.log("the figures are withdrawn the moment the form changes")
@@ -407,7 +465,7 @@ Item {
             check("a balance short of the amount", probe.node("swapReason").text, "Insufficient USDC balance")
             probe.publishQuote({ fee: { ok: false, error: "the account cannot afford this: 0.001 ETH short" } })
             check("a fee the account cannot pay", probe.node("swapReason").text, "Not enough ETH for gas")
-            check("...with the sender's words on screen", probe.node("feeErrorLabel").text, "Fee: the account cannot afford this: 0.001 ETH short")
+            check("...with the sender's words in the Fee sheet", probe.inFee("feeErrorLabel").text, "Fee: the account cannot afford this: 0.001 ETH short")
             probe.publishQuote({ priceImpactBps: 350 })
             check("3.5% impact is a warning colour, not a gate", probe.node("swapReason").text, "")
             probe.publishQuote({ priceImpactBps: 800 })

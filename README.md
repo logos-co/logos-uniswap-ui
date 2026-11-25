@@ -9,8 +9,10 @@ Information design follows the wallet, which follows MetaMask: one question per 
 choice and defaults to the first enabled mainnet when no prior choice exists, so a user must
 never be able to mistake which chain they are swapping on. Three sections. **Swap**: what you
 sell, what you buy, and under
-the two cards the rate, the minimum you receive, the price impact, the route, the pool fee
-and the network fee. **Activity**: the swaps this app made, one row per swap however many
+the two cards the rate, the minimum you receive, the price impact, the route and the pool
+fee, then one line with the fee tier and the max slippage, each with a pencil that opens its
+sheet: **Fee** (the tiers, the network fee and the sender's figures, the overrides) and
+**Max slippage** (slippage and deadline, the same values as Settings). **Activity**: the swaps this app made, one row per swap however many
 transactions it took. **Settings**: slippage and deadline, and the two hand-offs to the apps
 that manage accounts and token lists.
 
@@ -60,15 +62,15 @@ refused in words, never rounded; a displayed amount is truncated to five places,
 rounded up; "<0.00001" is an amount that is not nothing. The one double in the file is the
 rate line, which is a display of a ratio and says so.
 
-The network fee is shown as **"at most"**: `maxFeePerGas × gasLimit` is a ceiling the user
+The network fee, in the Fee sheet, is shown as **"at most"**: `maxFeePerGas × gasLimit` is a ceiling the user
 is not charged. Every leg's limit is `fee_module`'s estimate, the swap behind its approval
 estimated with that allowance applied; `uniswap_module`'s `gasLimitHint` is not sent, so the
 figure the user reads is the chain's, not this app's guess. Beside it: each call's gas limit,
 the max and priority fee in gwei, and the nonces the calls take.
 
-The fee tiers, those figures, the Advanced section and the review are the wallet's own, from
+The fee tiers, those figures, the overrides and the review are the wallet's own, from
 [logos-evm-tx-kit](https://github.com/logos-co/logos-evm-tx-kit), vendored in `src/qml/kit`
-and checked in CI against the commit in `src/qml/kit/VERSION`. Advanced sets the max and
+and checked in CI against the commit in `src/qml/kit/VERSION`. The overrides set the max and
 priority fee (both travel together), a gas limit per call, and a nonce for a one-transaction
 swap; a swap with an approval shows its two nonces read-only, since a nonce replaces one
 pending transaction.
