@@ -2071,7 +2071,7 @@ Item {
         anchors.centerIn: parent
         width: Math.min((parent ? parent.width : 600) - 40, 460)
         height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
-        body: ColumnLayout {
+        contentItem: ColumnLayout {
             spacing: Theme.spacing.medium
             SwapFeeTierPicker {
                 id: tierGroup
@@ -2133,7 +2133,7 @@ Item {
         width: Math.min((parent ? parent.width : 600) - 40, 460)
         height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
         onClosed: sheetPrefs.applyFields()
-        body: SwapPrefs {
+        contentItem: SwapPrefs {
             id: sheetPrefs
             prefix: "sheet"
             heading: false
