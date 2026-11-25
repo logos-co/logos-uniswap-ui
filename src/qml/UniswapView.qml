@@ -638,7 +638,8 @@ Item {
         if (state === "noAccount")
             return root.accounts.length > 0 ? "Pick an account"
                  : root.lockedWallets.length > 0 ? "Unlock a wallet first" : "Add an account first"
-        if (state === "selectToken") return "Select a token"
+        // No token to buy: the Buy card's own button already says "Select token".
+        if (state === "selectToken") return ""
         if (state === "enterAmount") return "Enter an amount"
         if (state === "sameToken") return "Choose two different tokens"
         if (state === "insufficient") return "Insufficient " + swapPage.sellSymbol + " balance"

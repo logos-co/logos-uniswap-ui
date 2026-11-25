@@ -117,6 +117,10 @@ check("the swap form scrolls above a pinned action bar holding Review swap",
 check("every scroll view turns its horizontal bar off",
       QML.count("LogosScrollView {"), QML.count("ScrollBar.horizontal.policy: ScrollBar.AlwaysOff"))
 
+print("0h. no reason repeats what a button says")
+check("\"Select a token\" is no reason beside Review swap (the Buy button says Select token)",
+      '"Select a token"' not in QML)
+
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")
 sys.exit(1 if failures else 0)

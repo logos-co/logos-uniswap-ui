@@ -219,7 +219,9 @@ Item {
             var page = probe.find(v, "swapPage")
             check("the network coin is seeded as the sell side", page.sellSymbol, "ETH")
             check("the button keeps its name", probe.node("swapButton").text, "Review swap")
-            check("nothing to buy yet: the reason beside it asks for a token", probe.node("swapReason").text, "Select a token")
+            check("nothing to buy yet: no reason beside it, the Buy button already says Select token",
+                  probe.node("swapReason").text + "/" + probe.node("swapReason").visible, "/false")
+            check("...nor is \"Select a token\" a reason in any state", v.swapReason("selectToken"), "")
             check("...and is disabled", probe.node("swapButton").enabled, false)
             console.log("")
             console.log("the two cards read alike, and only the page's action is primary")
