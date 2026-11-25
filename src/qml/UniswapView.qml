@@ -744,12 +744,22 @@ Item {
                 }
                 // A choice, not the page's action: secondary, with the dropdown's triangle.
                 LogosButton {
+                    id: tokenButton
                     objectName: card.sideName + "TokenButton"
-                    // As tall as the amount field beside it.
+                    // As tall as the amount field beside it, its ticker and triangle on the
+                    // field's centre line: the padding is split evenly whatever height the
+                    // field gives it (a design system whose button pads a fixed amount above
+                    // its content otherwise leaves the content low in a taller button).
                     Layout.preferredHeight: amountField.height
+                    Layout.alignment: Qt.AlignVCenter
+                    topPadding: Math.max(0, (height - implicitContentHeight) / 2)
+                    bottomPadding: topPadding
                     text: card.token ? String(card.token.symbol) : "Select token"
                     variant: LogosButton.Variant.Secondary
+                    // The triangle's own box is square and centred on it (assets/), so it sits
+                    // on the same line as the ticker.
                     trailingIcon.source: root.iconTriangleDown
+                    trailingIcon.size: 10
                     onClicked: card.pickToken()
                 }
             }

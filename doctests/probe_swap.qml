@@ -218,7 +218,13 @@ Item {
             check("...and says what it does", probe.node("buyTokenButton").text, "Select token")
             check("the token button is as tall as the amount field", probe.node("sellTokenButton").height,
                   probe.node("sellAmountField").height)
-            check("the Buy amount is a field too, read-only", probe.node("buyAmountField").readOnly, true)
+            var tb = probe.node("sellTokenButton")
+            check("...its padding split evenly above and below", tb.topPadding, tb.bottomPadding)
+            check("...so the ticker sits on its centre line",
+                  Math.abs(tb.labelItem.mapToItem(tb, 0, tb.labelItem.height / 2).y - tb.height / 2) <= 1, true)
+            check("...and so does the triangle",
+                  Math.abs(tb.trailingIconItem.mapToItem(tb, 0, tb.trailingIconItem.height / 2).y - tb.height / 2) <= 1, true)
+            check("the Buy amount is a field too, read-only",probe.node("buyAmountField").readOnly, true)
             check("the balance under the Sell field", probe.node("sellBalance").text, "Balance: 1.5")
             fake.selectedAccount = ""
             check("no account picked: the balance line says why it is empty", probe.node("sellBalance").text,
