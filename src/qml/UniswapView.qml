@@ -1460,29 +1460,33 @@ Item {
                                         color: Theme.palette.textSecondary
                                     }
                                 }
+                                // One card per swap, as the Bitcoin wallet's Activity; a card opens
+                                // into the swap's own screen.
                                 LogosListView {
                                     objectName: "swapsList"
                                     anchors.fill: parent
                                     visible: root.swaps.length > 0
+                                    clip: true
                                     model: root.swaps
-                                    spacing: 0
-                                    delegate: LogosItemDelegate {
+                                    spacing: Theme.spacing.small
+                                    delegate: LogosFrame {
                                         id: swapRow
                                         objectName: "swapRow_" + modelData.requestId
                                         width: ListView.view ? ListView.view.width : 0
-                                        topPadding: Theme.spacing.small
-                                        bottomPadding: Theme.spacing.small
-                                        implicitHeight: rowBody.implicitHeight + topPadding + bottomPadding
-                                        onClicked: root.openSwapDetail(modelData.requestId)
+                                        Accessible.role: Accessible.Button
+                                        Accessible.name: root.swapTitle(modelData)
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                        TapHandler { onTapped: root.openSwapDetail(modelData.requestId) }
                                         contentItem: ColumnLayout {
-                                            id: rowBody
-                                            spacing: 2
+                                            spacing: Theme.spacing.tiny
                                             RowLayout {
                                                 Layout.fillWidth: true
+                                                spacing: Theme.spacing.small
                                                 LogosText {
                                                     objectName: "swapTitle_" + modelData.requestId
                                                     textFormat: Text.PlainText
                                                     text: root.swapTitle(modelData)
+                                                    font.weight: Theme.typography.weightMedium
                                                     elide: Text.ElideRight
                                                     Layout.fillWidth: true
                                                 }
@@ -1492,22 +1496,29 @@ Item {
                                                     color: root.statusColor(modelData.status)
                                                 }
                                             }
-                                            LogosText {
-                                                objectName: "swapWhen_" + modelData.requestId
-                                                textFormat: Text.PlainText
-                                                color: Theme.palette.textSecondary
-                                                font.pixelSize: Theme.typography.secondaryText
-                                                text: root.txWhen(modelData.timestamp)
-                                                      + (modelData.legs !== undefined && modelData.legs.length > 1
-                                                         ? " · " + modelData.legs.length + " transactions" : "")
-                                                      + (root.receivedLine(modelData).length
-                                                         ? " · " + root.receivedLine(modelData) : "")
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacing.small
+                                                LogosText {
+                                                    objectName: "swapWhen_" + modelData.requestId
+                                                    Layout.fillWidth: true
+                                                    textFormat: Text.PlainText
+                                                    elide: Text.ElideRight
+                                                    color: Theme.palette.textSecondary
+                                                    font.pixelSize: Theme.typography.secondaryText
+                                                    text: root.txWhen(modelData.timestamp)
+                                                          + (modelData.legs !== undefined && modelData.legs.length > 1
+                                                             ? " · " + modelData.legs.length + " transactions" : "")
+                                                          + (root.receivedLine(modelData).length
+                                                             ? " · " + root.receivedLine(modelData) : "")
+                                                }
+                                                LogosButton {
+                                                    objectName: "swapDetails_" + modelData.requestId
+                                                    compact: true
+                                                    text: "Details"
+                                                    onClicked: root.openSwapDetail(modelData.requestId)
+                                                }
                                             }
-                                        }
-                                        Rectangle {
-                                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                                            height: 1
-                                            color: Theme.palette.borderTertiaryMuted
                                         }
                                     }
                                 }

@@ -417,9 +417,11 @@ Item {
             check("...and saying what it received, off the receipt",
                   String(probe.node("swapWhen_snd_1").text).indexOf("received 0.3331 ETH") > 0, true)
             check("an unmeasured swap claims nothing received", v.receivedLine({ swap: { symbolOut: "ETH" } }), "")
-            v.openSwapDetail("snd_1")
+            check("the swap is a framed card", probe.node("swapRow_snd_1").contentItem !== undefined
+                  && probe.node("swapRow_snd_1").background !== null, true)
+            probe.node("swapDetails_snd_1").clicked()
             var nav = probe.find(v, "nav")
-            check("a row opens the swap's own screen", nav.depth, 2)
+            check("its Details opens the swap's own screen", nav.depth, 2)
             var screen = nav.currentItem
             check("...titled the same", probe.find(screen, "swapDetailTitle").text, "Swap 1000 USDC for 0.33327 ETH")
             check("...with the minimum it was sent with", probe.find(screen, "swapDetailMin").value, "0.33161 ETH")
