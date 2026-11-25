@@ -73,6 +73,8 @@ Item {
     property string dismissedOutcome: ""
 
     readonly property var swapOutcome: root.ready ? j(backend.lastSwapOutcomeJson, "{}") : ({})
+    // A pinned nonce is spent by the swap that carried it: the next swap must not reuse it.
+    onSwapOutcomeChanged: if (swapOutcome.status === "broadcast") advanced.clearNonce()
     readonly property var outcomeHashes: root.swapOutcome.hashes !== undefined
                                          ? root.swapOutcome.hashes : []
     function dismissOutcome() { root.dismissedOutcome = root.backend.lastSwapOutcomeJson }
@@ -782,8 +784,10 @@ Item {
     // nonce. `custom` is Custom chosen: `prefill()` turns it on with the last priced quote's figures
     // (the two fees from the chosen tier's fee_module figures while nothing is quoted), editing any
     // field turns it on, `clear()` (a tier chosen) empties them and turns it off. `incomplete` is
-    // Custom with a field still empty: the sheet's Done waits on it, and closing the sheet any
-    // other way puts back what was on when it opened. `overrides` is what the request carries, in
+    // Custom with a fee or a gas limit still empty: the sheet's Done waits on it, and closing the
+    // sheet any other way puts back what was on when it opened. The nonce is optional and never
+    // filled in here: a pinned nonce replaces a pending transaction, so it is only what the user
+    // typed, and a sent swap clears it. Gas limits follow each new quote until the user types one. `overrides` is what the request carries, in
     // wei, as the kit's rules shape it.
     component SwapFeeOverrides: ColumnLayout {
         id: adv
@@ -808,18 +812,34 @@ Item {
         // Custom chosen before a quote named every figure (the gas limits and the nonce, or a fee
         // fee_module's tier left out): the first one that does fills the fields still empty.
         property bool awaiting: false
-        onSeenChanged: if (custom && awaiting) fillFromQuote()
+        onSeenChanged: if (custom) { if (awaiting) fillFromQuote(); else followQuote() }
+        // Per call: the user typed this gas limit, so a new quote leaves it alone.
+        property var gasTyped: []
 
-        readonly property bool gasOrNonceEmpty: {
+        readonly property bool gasEmpty: {
             for (var i = 0; i < calls; ++i)
                 if (!Fees.text(gasTexts[i]).length) return true
-            return calls === 1 && !Fees.text(nonce.text).length
+            return false
         }
         readonly property bool incomplete: custom
-            && (!Fees.text(maxFee.text).length || !Fees.text(priorityFee.text).length || gasOrNonceEmpty)
-        // Only a quote knows the gas limits and the nonce: still waiting for one means a token
-        // still to pick. A field emptied by hand is only incomplete.
-        readonly property bool needsQuote: incomplete && gasOrNonceEmpty && awaiting
+            && (!Fees.text(maxFee.text).length || !Fees.text(priorityFee.text).length || gasEmpty)
+        // Only a quote knows the gas limits: still waiting for one means a token still to pick.
+        // A field emptied by hand is only incomplete.
+        readonly property bool needsQuote: incomplete && gasEmpty && awaiting
+        // The gas limits the user typed below this quote's estimate: such a swap can run out of
+        // gas and revert, and its fee is still paid.
+        readonly property var lowGas: {
+            var out = []
+            if (!custom) return out
+            var est = Fees.gasLimits(seen)
+            for (var i = 0; i < calls; ++i) {
+                var t = Fees.text(gasTexts[i]), e = est[i]
+                if (gasTyped[i] === true && /^[0-9]+$/.test(t) && e !== undefined && /^[0-9]+$/.test(String(e))
+                        && Number(t) < Number(e))
+                    out.push((calls > 1 ? (callLabels[i] || "Call " + (i + 1)) + ": " : "") + "estimate " + e)
+            }
+            return out
+        }
 
         // Gwei as written ("1.7", "0.000000034") to wei, exactly; "" for anything else.
         function weiOf(g) {
@@ -863,6 +883,17 @@ Item {
             g[i] = t
             gasTexts = g
         }
+        function markTyped(i, on) {
+            var g = gasTyped.slice()
+            g[i] = on
+            gasTyped = g
+        }
+        // A sent swap used the pin: the next one takes the account's next nonce again.
+        function clearNonce() {
+            quiet = true
+            nonce.text = ""
+            quiet = false
+        }
         function fill(fee, tip, limits, n) {
             quiet = true
             maxFee.text = fee
@@ -880,8 +911,8 @@ Item {
             // quote's (the live one is empty while it re-prices).
             var t = tierFee !== null && typeof tierFee === "object" ? tierFee : { maxFeePerGas: tierFee }
             var f = q.maxFeePerGas !== undefined ? q : Fees.text(t.maxFeePerGas).length ? t : seen
-            fill(Fees.gwei(f.maxFeePerGas), Fees.gwei(f.maxPriorityFeePerGas),
-                 Fees.gasLimits(seen), calls === 1 && seen.nonce !== undefined ? String(seen.nonce) : "")
+            fill(Fees.gwei(f.maxFeePerGas), Fees.gwei(f.maxPriorityFeePerGas), Fees.gasLimits(seen), "")
+            gasTyped = []
             heldFee = ""
             heldTip = ""
             hold()
@@ -900,23 +931,37 @@ Item {
                     gasFields.itemAt(i).text = limits[i] || ""
                     setGas(i, limits[i] || "")
                 }
-            if (calls === 1 && !Fees.text(nonce.text).length && seen.nonce !== undefined)
-                nonce.text = String(seen.nonce)
             quiet = false
             awaiting = false
         }
+        // A new quote (other amount, pair or route): the gas limits the user did not type take
+        // its estimates.
+        function followQuote() {
+            var limits = Fees.gasLimits(seen)
+            if (!limits.length) return
+            quiet = true
+            for (var i = 0; i < gasFields.count; ++i)
+                if (gasTyped[i] !== true && limits[i] !== undefined && gasFields.itemAt(i).text !== String(limits[i])) {
+                    gasFields.itemAt(i).text = String(limits[i])
+                    setGas(i, String(limits[i]))
+                }
+            quiet = false
+        }
         function clear() {
-            fill("", "", [], "")
-            gasTexts = []
-            heldFee = ""
-            heldTip = ""
+            // Off first: emptying the fields re-quotes, and that quote must not refill them.
             custom = false
             awaiting = false
+            fill("", "", [], "")
+            gasTexts = []
+            gasTyped = []
+            heldFee = ""
+            heldTip = ""
         }
         // What is on, to put back: the sheet takes one as it opens.
         function snapshot() {
             return { custom: custom, fee: maxFee.text, tip: priorityFee.text, gas: gasTexts.slice(0, calls),
-                     nonce: nonce.text, heldFee: heldFee, heldTip: heldTip, calls: calls, incomplete: incomplete }
+                     nonce: nonce.text, heldFee: heldFee, heldTip: heldTip, calls: calls, incomplete: incomplete,
+                     gasTyped: gasTyped.slice() }
         }
         // Back to a snapshot: its Custom if it was a whole one for these calls, else the tier.
         function restore(snap) {
@@ -925,6 +970,7 @@ Item {
                 return
             }
             fill(snap.fee, snap.tip, snap.gas, snap.nonce)
+            gasTyped = snap.gasTyped || []
             heldFee = snap.heldFee
             heldTip = snap.heldTip
             custom = true
@@ -936,6 +982,7 @@ Item {
             quiet = true
             for (var i = 0; i < gasFields.count; ++i) gasFields.itemAt(i).text = ""
             gasTexts = []
+            gasTyped = []
             nonce.text = ""
             quiet = false
             awaiting = custom
@@ -971,10 +1018,22 @@ Item {
                 unit: "gas"
                 fieldName: adv.calls > 1 ? "gasLimitField_" + index : "gasLimitField"
                 placeholder: estimated.length ? "estimated " + estimated : ""
-                onEdited: { adv.setGas(index, text); adv.edited() }
+                onEdited: {
+                    adv.setGas(index, text)
+                    if (!adv.quiet) adv.markTyped(index, Fees.text(text).length > 0)
+                    adv.edited()
+                }
             }
         }
-        // A nonce replaces ONE pending transaction, so a send of several cannot take one.
+        LogosText {
+            objectName: "gasBelowEstimateNote"
+            visible: adv.lowGas.length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.warning
+            text: "Below this quote's " + adv.lowGas.join(", ") + ": the swap can run out of gas and still pay the fee"
+        }
+        // Optional. A nonce replaces ONE pending transaction, so a send of several cannot take one.
         FeeField {
             id: nonce
             label: "Nonce"
@@ -982,7 +1041,7 @@ Item {
             readOnly: adv.calls > 1
             placeholder: adv.calls > 1
                 ? Fees.nonces(adv.seen, adv.calls).join(", ") + ": a send of " + adv.calls + " cannot be pinned"
-                : adv.seen.nonce !== undefined ? "next is " + adv.seen.nonce : ""
+                : adv.seen.nonce !== undefined ? "optional, next is " + adv.seen.nonce : "optional"
             onEdited: adv.edited()
         }
         LogosText {
@@ -1000,7 +1059,7 @@ Item {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             color: Theme.palette.textSecondary
-            text: "Fill in all four, or pick Low, Market or Fast"
+            text: "Fill in the fees and the gas limit" + (adv.calls > 1 ? "s" : "") + ", or pick Low, Market or Fast"
         }
         LogosText {
             objectName: "customNeedsQuoteNote"

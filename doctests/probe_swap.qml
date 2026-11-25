@@ -250,7 +250,7 @@ Item {
                   "[" + probe.inFee("gasLimitField").text + "][" + probe.inFee("nonceField").text + "]", "[][]")
             check("Done is held while Custom has an empty field", earlyDone.enabled, false)
             check("...the reason under the fields", probe.inFee("customIncompleteNote").visible + " " + probe.inFee("customIncompleteNote").text,
-                  "true Fill in all four, or pick Low, Market or Fast")
+                  "true Fill in the fees and the gas limit, or pick Low, Market or Fast")
             check("...and why two of them are empty", probe.inFee("customNeedsQuoteNote").visible + " " + probe.inFee("customNeedsQuoteNote").text,
                   "true Pick both tokens to get a quote first")
             early.reject()
@@ -265,9 +265,10 @@ Item {
             early.open()
             probe.inFee("tierCustom").clicked()
             probe.typeInto(probe.inFee("gasLimitField"), "200000")
-            check("one of the two typed by hand: still held", earlyDone.enabled, false)
+            check("the gas limit typed by hand: Done is free, the nonce is optional", earlyDone.enabled, true)
+            check("...the nonce left empty, its placeholder says so", "[" + probe.inFee("nonceField").text + "]", "[]")
             probe.typeInto(probe.inFee("nonceField"), "3")
-            check("all four in: Done is free, the notes gone", earlyDone.enabled + " " + probe.inFee("customIncompleteNote").visible
+            check("a nonce typed too: Done still free, the notes gone", earlyDone.enabled + " " + probe.inFee("customIncompleteNote").visible
                   + " " + probe.inFee("customNeedsQuoteNote").visible, "true false false")
             earlyDone.clicked()
             check("...and Done keeps that Custom", early.visible + " " + probe.node("feeSummary").text, "false Fee: Custom ≤ 1.7 gwei")
@@ -533,6 +534,45 @@ Item {
             probe.inFee("tierNormal").clicked()
             feeSheet.rightActions[0].clicked()
             check("...and a tier leaves it, Done closing", feeSheet.visible + " " + probe.inFee("tierCustom").checked, "false false")
+            probe.publishQuote({})
+
+            console.log("")
+            console.log("Custom on a single-call swap: the nonce stays optional, the gas limit follows the quote until typed")
+            var oneFee = function (gas) {
+                return { ok: true, feeCeilingWeiDisplay: "0.0004", nativeSymbol: "ETH", feeSource: "eip1559", nonce: 7,
+                         maxFeePerGas: "1700000000", maxPriorityFeePerGas: "169400000", gasLimit: gas,
+                         legs: [{ gasLimit: gas, label: "Swap USDC for ETH on Uniswap V3" }] }
+            }
+            var one = function (gas) {
+                return { needsApproval: false, approval: "none", fee: oneFee(gas),
+                         calls: [{ kind: "swap", to: probe.router, label: "Swap USDC for ETH on Uniswap V3" }] }
+            }
+            probe.publishQuote(one(180000))
+            feeSheet.open()
+            probe.inFee("tierCustom").clicked()
+            check("Custom: the gas limit prefilled, the nonce left empty",
+                  probe.inFee("gasLimitField").text + " [" + probe.inFee("nonceField").text + "]", "180000 []")
+            check("...its placeholder names the next one", probe.inFee("nonceField").placeholderText, "optional, next is 7")
+            check("...Done is free without it", feeSheet.rightActions[0].enabled, true)
+            check("...and the request pins no nonce", JSON.parse(probe.quoted[probe.quoted.length - 1]).nonce, undefined)
+            probe.publishQuote(one(260000))
+            check("a new quote (another amount or route): the gas limit follows it", probe.inFee("gasLimitField").text, "260000")
+            probe.typeInto(probe.inFee("gasLimitField"), "200000")
+            probe.publishQuote(one(300000))
+            check("a limit typed by hand stays through the next quote", probe.inFee("gasLimitField").text, "200000")
+            check("...and below the quote's estimate it warns, without holding Done",
+                  probe.inFee("gasBelowEstimateNote").visible + " " + feeSheet.rightActions[0].enabled + " "
+                  + (probe.inFee("gasBelowEstimateNote").text.indexOf("estimate 300000") >= 0), "true true true")
+            probe.typeInto(probe.inFee("nonceField"), "7")
+            check("a nonce typed by hand is pinned", JSON.parse(probe.quoted[probe.quoted.length - 1]).nonce, 7)
+            fake.lastSwapOutcomeJson = JSON.stringify({ status: "broadcast", hashes: ["0xabc"] })
+            check("a sent swap clears it, so the next swap takes the next nonce",
+                  "[" + probe.inFee("nonceField").text + "] " + probe.inFee("tierCustom").checked, "[] true")
+            fake.lastSwapOutcomeJson = ""
+            var outDlg = probe.find(v, "swapOutcomeDialog")
+            if (outDlg && outDlg.visible) outDlg.close()
+            probe.inFee("tierNormal").clicked()
+            feeSheet.rightActions[0].clicked()
             probe.publishQuote({})
 
             console.log("")
