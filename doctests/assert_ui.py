@@ -117,9 +117,11 @@ check("the swap form scrolls above a pinned action bar holding Review swap",
 check("every scroll view turns its horizontal bar off",
       QML.count("LogosScrollView {"), QML.count("ScrollBar.horizontal.policy: ScrollBar.AlwaysOff"))
 
-print("0h. no reason repeats what a button says")
+print("0h. no reason repeats what a button says, and the Activity tab is its cards")
 check("\"Select a token\" is no reason beside Review swap (the Buy button says Select token)",
       '"Select a token"' not in QML)
+check("the Activity tab has no explanatory line over its cards",
+      "Swaps made from this app" not in QML and '"activityNote"' not in QML)
 
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")

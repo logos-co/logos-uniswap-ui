@@ -46,6 +46,14 @@ Item {
         for (var i = 0; i < kids.length; ++i) n += primaries(kids[i])
         return n
     }
+    // Items under o whose text holds the phrase, visible or not.
+    function textsContaining(o, phrase) {
+        if (!o) return 0
+        var n = (typeof o.text === "string" && o.text.indexOf(phrase) >= 0) ? 1 : 0
+        var kids = o.data !== undefined ? o.data : []
+        for (var i = 0; i < kids.length; ++i) n += textsContaining(kids[i], phrase)
+        return n
+    }
     function networkSheetOpen() { probe.find(view.item, "networkSheet").open() }
     function inDialog(dialogName, name) {
         var d = find(view.item, dialogName)
@@ -676,6 +684,9 @@ Item {
         interval: 300
         onTriggered: {
             var v = view.item
+            check("no explanatory line over the cards", probe.node("activityNote").visible, "<missing>")
+            check("...the page holds nothing about \"Swaps made from this app\"",
+                  probe.textsContaining(probe.find(v, "activityPage"), "Swaps made from this app"), 0)
             check("one row for the two-transaction swap", probe.node("swapTitle_snd_1").text, "Swap 1000 USDC for 0.33327 ETH")
             check("...settled as a whole", probe.node("swapStatus_snd_1").text, "confirmed")
             check("...counting its transactions", String(probe.node("swapWhen_snd_1").text).indexOf("2 transactions") > 0, true)

@@ -1940,15 +1940,6 @@ Item {
                             anchors.fill: parent
                             spacing: Theme.spacing.tiny
                             LogosText {
-                                objectName: "activityNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: "Swaps made from this app on this account and network. "
-                                      + "The wallet's Activity shows them too, beside its own sends."
-                            }
-                            LogosText {
                                 objectName: "sweepNote"
                                 visible: root.sweeping
                                 Layout.fillWidth: true
