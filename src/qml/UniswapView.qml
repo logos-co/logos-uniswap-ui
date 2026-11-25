@@ -949,10 +949,21 @@ Item {
         // Off in the Max slippage sheet, whose title already says it.
         property bool heading: true
         function nm(n) { return prefix.length ? prefix + n.charAt(0).toUpperCase() + n.slice(1) : n }
+        // Custom chosen here, before a figure for it is applied: the setting is still Auto.
+        property bool customPicked: false
+        readonly property bool customOn: root.settings.autoSlippage !== true || customPicked
         // A sheet closed with a field still focused never saw it finish: closing applies both.
         function applyFields() {
-            if (slippageField.text.trim().length) slippageField.apply()
+            slippageField.apply()
             deadlineField.apply()
+        }
+        // Custom: the current figure, selected, ready to be typed over.
+        function pickCustom() {
+            customPicked = true
+            var i = slippageField.textInput
+            if (!slippageField.text.trim().length) i.insert(0, (root.slippageBps / 100).toString())
+            i.forceActiveFocus()
+            i.selectAll()
         }
         spacing: Theme.spacing.small
 
@@ -967,15 +978,20 @@ Item {
                 objectName: prefs.nm("slippageAuto")
                 text: "Auto (0.5%)"
                 checkable: false
-                checked: root.settings.autoSlippage === true
-                onClicked: if (root.ready) root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                checked: !prefs.customOn
+                onClicked: {
+                    prefs.customPicked = false
+                    // A figure Custom put there and never applied goes with it.
+                    slippageField.textInput.remove(0, slippageField.textInput.length)
+                    if (root.ready) root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                }
             }
             FrameRadio {
                 objectName: prefs.nm("slippageCustom")
                 text: "Custom"
                 checkable: false
-                checked: root.settings.autoSlippage !== true
-                onClicked: slippageField.textInput.forceActiveFocus()
+                checked: prefs.customOn
+                onClicked: prefs.pickCustom()
             }
             LogosTextField {
                 id: slippageField
@@ -985,8 +1001,16 @@ Item {
                 text: root.settings.autoSlippage === true ? "" : (root.slippageBps / 100).toString()
                 // Applied when the field is left, not on every keystroke: "1." is not a slippage
                 // yet. LogosTextField wraps a TextInput and exposes it, so the signal is the inner
-                // item's.
+                // item's. Left empty under Custom, it goes back to Auto.
                 function apply() {
+                    if (!text.trim().length) {
+                        var back = prefs.customOn
+                        prefs.customPicked = false
+                        if (back && root.ready)
+                            root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                        return
+                    }
+                    prefs.customPicked = false
                     var pct = parseFloat(text)
                     if (isNaN(pct) || !root.ready) return
                     if (root.settings.autoSlippage !== true && Math.round(pct * 100) === root.slippageBps) return
@@ -996,9 +1020,20 @@ Item {
                 Connections {
                     target: slippageField.textInput
                     function onEditingFinished() { slippageField.apply() }
+                    // Typing a figure is choosing Custom.
+                    function onTextEdited() { if (slippageField.text.trim().length) prefs.customPicked = true }
                 }
             }
             LogosText { text: "%"; color: Theme.palette.textSecondary }
+        }
+        LogosText {
+            objectName: prefs.nm("slippageEmptyHint")
+            visible: prefs.customOn && !slippageField.text.trim().length
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: "Left empty, max slippage goes back to Auto (0.5%)."
         }
         LogosText {
             objectName: prefs.nm("slippageNote")
