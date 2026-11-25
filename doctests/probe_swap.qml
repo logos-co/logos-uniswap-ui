@@ -231,6 +231,61 @@ Item {
                   probe.node("swapReason").text + "/" + probe.node("swapReason").visible, "/false")
             check("...nor is \"Select a token\" a reason in any state", v.swapReason("selectToken"), "")
             check("...and is disabled", probe.node("swapButton").enabled, false)
+
+            console.log("")
+            console.log("the Fee sheet's Custom before any quote: the tier's fees, Done held until all four are in")
+            var early = probe.find(v, "feeSheet")
+            var tiersBefore = fake.feeTiersJson
+            fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
+                tiers: { slow: { maxFeePerGas: "1200000000", maxPriorityFeePerGas: "100000000" },
+                         normal: { maxFeePerGas: "1700000000", maxPriorityFeePerGas: "200000000" },
+                         fast: { maxFeePerGas: "2500000000", maxPriorityFeePerGas: "500000000" } } })
+            early.open()
+            var earlyDone = early.rightActions[0]
+            check("a tier on, Done free", probe.inFee("tierNormal").checked + "/" + earlyDone.enabled, "true/true")
+            probe.inFee("tierCustom").clicked()
+            check("Custom with no quote: max and priority fee from Market's fee_module figures",
+                  probe.inFee("maxFeeField").text + " / " + probe.inFee("maxPriorityFeeField").text, "1.7 / 0.2")
+            check("...gas limit and nonce empty, nothing has priced them",
+                  "[" + probe.inFee("gasLimitField").text + "][" + probe.inFee("nonceField").text + "]", "[][]")
+            check("Done is held while Custom has an empty field", earlyDone.enabled, false)
+            check("...the reason under the fields", probe.inFee("customIncompleteNote").visible + " " + probe.inFee("customIncompleteNote").text,
+                  "true Fill in all four, or pick Low, Market or Fast")
+            check("...and why two of them are empty", probe.inFee("customNeedsQuoteNote").visible + " " + probe.inFee("customNeedsQuoteNote").text,
+                  "true Pick both tokens to get a quote first")
+            early.reject()
+            check("Esc or the X with Custom incomplete: the sheet closes", early.visible, false)
+            check("...back on the tier it had, the fields emptied", probe.inFee("tierCustom").checked + "/" + probe.inFee("tierNormal").checked
+                  + " [" + probe.inFee("maxFeeField").text + "]", "false/true []")
+            check("...and the line reads the tier, not Custom", probe.node("feeSummary").text.indexOf("Fee: Market"), 0)
+            early.open()
+            probe.inFee("tierCustom").clicked()
+            early.close()
+            check("closed any other way, the same", probe.inFee("tierCustom").checked + "/" + probe.inFee("tierNormal").checked, "false/true")
+            early.open()
+            probe.inFee("tierCustom").clicked()
+            probe.typeInto(probe.inFee("gasLimitField"), "200000")
+            check("one of the two typed by hand: still held", earlyDone.enabled, false)
+            probe.typeInto(probe.inFee("nonceField"), "3")
+            check("all four in: Done is free, the notes gone", earlyDone.enabled + " " + probe.inFee("customIncompleteNote").visible
+                  + " " + probe.inFee("customNeedsQuoteNote").visible, "true false false")
+            earlyDone.clicked()
+            check("...and Done keeps that Custom", early.visible + " " + probe.node("feeSummary").text, "false Fee: Custom ≤ 1.7 gwei")
+            early.open()
+            probe.typeInto(probe.inFee("maxPriorityFeeField"), "")
+            check("a field emptied by hand holds Done, with no quote to wait on now",
+                  earlyDone.enabled + " " + probe.inFee("customIncompleteNote").visible + " " + probe.inFee("customNeedsQuoteNote").visible,
+                  "false true false")
+            early.reject()
+            check("Esc puts back the whole Custom it opened with", probe.inFee("tierCustom").checked + " "
+                  + probe.inFee("maxPriorityFeeField").text + " " + probe.inFee("gasLimitField").text + " " + probe.inFee("nonceField").text,
+                  "true 0.2 200000 3")
+            early.open()
+            probe.inFee("tierNormal").clicked()
+            earlyDone.clicked()
+            check("a tier and Done leave Custom", probe.inFee("tierCustom").checked + " [" + probe.inFee("nonceField").text + "]", "false []")
+            fake.feeTiersJson = tiersBefore
+
             console.log("")
             console.log("the two cards read alike, and only the page's action is primary")
             check("no token to buy: its button is secondary", probe.node("buyTokenButton").variant, 1)
@@ -456,6 +511,28 @@ Item {
             feeSheet.rightActions[0].clicked()
             check("Done closes the sheet", feeSheet.visible, false)
             check("...and the line is back on the tier", probe.node("feeSummary").text, "Fee: Market ≤ 1.7 gwei")
+            probe.publishQuote({})
+
+            console.log("")
+            console.log("Custom picked while the quote is still to come: the quote fills the gas limits")
+            var ov = probe.inFee("feeOverrides")
+            feeSheet.open()
+            fake.quoteJson = "{}"
+            ov.seen = ({})
+            probe.inFee("tierCustom").clicked()
+            check("no quote yet: the gas limits empty, Done held, the sheet says why",
+                  "[" + probe.inFee("gasLimitField_0").text + "][" + probe.inFee("gasLimitField_1").text + "] "
+                  + feeSheet.rightActions[0].enabled + " " + probe.inFee("customNeedsQuoteNote").visible, "[][] false true")
+            probe.publishQuote({})
+            check("the quote lands: each call's gas limit filled in", probe.inFee("gasLimitField_0").text + " / "
+                  + probe.inFee("gasLimitField_1").text, "46000 / 180000")
+            check("...and the priority fee Market's figures left out", probe.inFee("maxFeeField").text + " / "
+                  + probe.inFee("maxPriorityFeeField").text, "1.7 / 0.1694")
+            check("...a send of two needs no nonce, so Done is free", probe.inFee("nonceField").readOnly + " "
+                  + feeSheet.rightActions[0].enabled + " " + probe.inFee("customIncompleteNote").visible, "true true false")
+            probe.inFee("tierNormal").clicked()
+            feeSheet.rightActions[0].clicked()
+            check("...and a tier leaves it, Done closing", feeSheet.visible + " " + probe.inFee("tierCustom").checked, "false false")
             probe.publishQuote({})
 
             console.log("")

@@ -779,12 +779,18 @@ Item {
     }
 
     // The Fee sheet's Custom figures: max fee and priority fee in gwei, each call's gas limit, the
-    // nonce. `custom` is Custom chosen: `prefill()` turns it on with the last priced quote's figures,
-    // editing any field turns it on, `clear()` (a tier chosen) empties them and turns it off.
-    // `overrides` is what the request carries, in wei, as the kit's rules shape it.
+    // nonce. `custom` is Custom chosen: `prefill()` turns it on with the last priced quote's figures
+    // (the two fees from the chosen tier's fee_module figures while nothing is quoted), editing any
+    // field turns it on, `clear()` (a tier chosen) empties them and turns it off. `incomplete` is
+    // Custom with a field still empty: the sheet's Done waits on it, and closing the sheet any
+    // other way puts back what was on when it opened. `overrides` is what the request carries, in
+    // wei, as the kit's rules shape it.
     component SwapFeeOverrides: ColumnLayout {
         id: adv
         property var quote: ({})
+        // The chosen tier as fee_module sent it: `{ maxFeePerGas, maxPriorityFeePerGas }` in wei,
+        // or the max fee alone; the fees Custom starts from before any quote.
+        property var tierFee: null
         property int calls: 1
         property var callLabels: []
         property bool custom: false
@@ -799,6 +805,21 @@ Item {
         readonly property var q: quote ? quote : ({})
         property var seen: ({})
         onQChanged: if (q.maxFeePerGas !== undefined) seen = q
+        // Custom chosen before a quote named every figure (the gas limits and the nonce, or a fee
+        // fee_module's tier left out): the first one that does fills the fields still empty.
+        property bool awaiting: false
+        onSeenChanged: if (custom && awaiting) fillFromQuote()
+
+        readonly property bool gasOrNonceEmpty: {
+            for (var i = 0; i < calls; ++i)
+                if (!Fees.text(gasTexts[i]).length) return true
+            return calls === 1 && !Fees.text(nonce.text).length
+        }
+        readonly property bool incomplete: custom
+            && (!Fees.text(maxFee.text).length || !Fees.text(priorityFee.text).length || gasOrNonceEmpty)
+        // Only a quote knows the gas limits and the nonce: still waiting for one means a token
+        // still to pick. A field emptied by hand is only incomplete.
+        readonly property bool needsQuote: incomplete && gasOrNonceEmpty && awaiting
 
         // Gwei as written ("1.7", "0.000000034") to wei, exactly; "" for anything else.
         function weiOf(g) {
@@ -855,12 +876,34 @@ Item {
         }
         function prefill() {
             if (custom) return
-            fill(Fees.gwei(seen.maxFeePerGas), Fees.gwei(seen.maxPriorityFeePerGas), Fees.gasLimits(seen),
-                 calls === 1 && seen.nonce !== undefined ? String(seen.nonce) : "")
+            // The fees: the live quote's, else the tier's as fee_module sent them, else the last
+            // quote's (the live one is empty while it re-prices).
+            var t = tierFee !== null && typeof tierFee === "object" ? tierFee : { maxFeePerGas: tierFee }
+            var f = q.maxFeePerGas !== undefined ? q : Fees.text(t.maxFeePerGas).length ? t : seen
+            fill(Fees.gwei(f.maxFeePerGas), Fees.gwei(f.maxPriorityFeePerGas),
+                 Fees.gasLimits(seen), calls === 1 && seen.nonce !== undefined ? String(seen.nonce) : "")
             heldFee = ""
             heldTip = ""
             hold()
             custom = true
+            awaiting = incomplete
+        }
+        // What a quote named, into the fields still empty.
+        function fillFromQuote() {
+            var limits = Fees.gasLimits(seen)
+            if (!limits.length) return
+            quiet = true
+            if (!Fees.text(maxFee.text).length) maxFee.text = Fees.gwei(seen.maxFeePerGas)
+            if (!Fees.text(priorityFee.text).length) priorityFee.text = Fees.gwei(seen.maxPriorityFeePerGas)
+            for (var i = 0; i < gasFields.count; ++i)
+                if (!Fees.text(gasFields.itemAt(i).text).length) {
+                    gasFields.itemAt(i).text = limits[i] || ""
+                    setGas(i, limits[i] || "")
+                }
+            if (calls === 1 && !Fees.text(nonce.text).length && seen.nonce !== undefined)
+                nonce.text = String(seen.nonce)
+            quiet = false
+            awaiting = false
         }
         function clear() {
             fill("", "", [], "")
@@ -868,14 +911,34 @@ Item {
             heldFee = ""
             heldTip = ""
             custom = false
+            awaiting = false
         }
-        // Limits and a pin set for one set of calls must not land on another's.
+        // What is on, to put back: the sheet takes one as it opens.
+        function snapshot() {
+            return { custom: custom, fee: maxFee.text, tip: priorityFee.text, gas: gasTexts.slice(0, calls),
+                     nonce: nonce.text, heldFee: heldFee, heldTip: heldTip, calls: calls, incomplete: incomplete }
+        }
+        // Back to a snapshot: its Custom if it was a whole one for these calls, else the tier.
+        function restore(snap) {
+            if (!snap || !snap.custom || snap.incomplete || snap.calls !== calls) {
+                clear()
+                return
+            }
+            fill(snap.fee, snap.tip, snap.gas, snap.nonce)
+            heldFee = snap.heldFee
+            heldTip = snap.heldTip
+            custom = true
+            awaiting = false
+        }
+        // Limits and a pin set for one set of calls must not land on another's: the next quote
+        // names the new ones.
         onCallsChanged: {
             quiet = true
             for (var i = 0; i < gasFields.count; ++i) gasFields.itemAt(i).text = ""
             gasTexts = []
             nonce.text = ""
             quiet = false
+            awaiting = custom
         }
 
         Layout.fillWidth: true
@@ -928,7 +991,24 @@ Item {
             wrapMode: Text.WordWrap
             color: Theme.palette.textSecondary
             font.pixelSize: Theme.typography.secondaryText
-            text: "A field left empty takes the quote's figure. Choosing Low, Market or Fast clears these."
+            text: "Choosing Low, Market or Fast clears these."
+        }
+        // Why Done waits: a field still empty. Said under the fields, where they are filled in.
+        LogosText {
+            objectName: "customIncompleteNote"
+            visible: adv.incomplete
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Fill in all four, or pick Low, Market or Fast"
+        }
+        LogosText {
+            objectName: "customNeedsQuoteNote"
+            visible: adv.needsQuote
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Pick both tokens to get a quote first"
         }
         LogosText {
             objectName: "advancedError"
@@ -2329,7 +2409,10 @@ Item {
             }
             SwapFeeOverrides {
                 id: advanced
+                objectName: "feeOverrides"
                 quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                tierFee: root.fees.tiers !== undefined && root.fees.tiers !== null
+                         && root.fees.tiers[swapPage.tier] !== undefined ? root.fees.tiers[swapPage.tier] : null
                 calls: swapPage.calls
                 callLabels: swapPage.callLabels
             }
@@ -2339,9 +2422,16 @@ Item {
                 objectName: "feeSheetDone"
                 variant: LogosButton.Variant.Primary
                 text: "Done"
+                // Custom with a field still empty is not a fee to leave with.
+                enabled: !advanced.incomplete
                 onClicked: feeSheet.close()
             }
         ]
+        // What was on as the sheet opened. Done is off while Custom has an empty field, so a
+        // close with one is the X, Esc or a click outside: it puts that back.
+        property var openedWith: null
+        onOpened: openedWith = advanced.snapshot()
+        onClosed: if (advanced.incomplete) advanced.restore(openedWith)
     }
     // The Max slippage sheet: the same settings as the Settings tab, read and written alike.
     LogosDialog {

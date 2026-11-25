@@ -123,6 +123,12 @@ check("\"Select a token\" is no reason beside Review swap (the Buy button says S
 check("the Activity tab has no explanatory line over its cards",
       "Swaps made from this app" not in QML and '"activityNote"' not in QML)
 
+print("0i. no way out of the Fee sheet with Custom half filled in")
+check("the Fee sheet's Done is off while Custom has an empty field",
+      re.search(r'objectName: "feeSheetDone".*?enabled: !advanced\.incomplete', QML, re.S) is not None)
+check("...and any other close (X, Esc, outside) puts back what the sheet opened with",
+      re.search(r'id: feeSheet.*?onOpened: openedWith = advanced\.snapshot\(\)\s*onClosed: if \(advanced\.incomplete\) advanced\.restore\(openedWith\)', QML, re.S) is not None)
+
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")
 sys.exit(1 if failures else 0)
