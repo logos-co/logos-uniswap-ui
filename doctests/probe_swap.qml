@@ -300,6 +300,14 @@ Item {
             console.log("the Fee block: the wallet's radios, each with what its tier pays per gas")
             check("Market is the tier on", probe.node("tierNormal").checked, true)
             check("...a radio, not a second primary button", probe.node("tierNormal").variant, undefined)
+            var card = probe.node("feeCard"), low = probe.node("tierSlow")
+            check("an unselected ring stands off the framed card: its fill is not the card's",
+                  String(low.indicatorItem.color) !== String(card.backgroundColor), true)
+            check("...and its ring is the tertiary grey, not the card's border",
+                  String(low.indicatorItem.border.color) !== String(card.borderColor)
+                  && String(low.indicatorItem.border.color) === String(low.borderColor), true)
+            check("...as is the Advanced box beside it",
+                  String(probe.node("swapAdvancedToggle").boxColor) !== String(card.backgroundColor), true)
             check("no estimate where fee_module named none", probe.node("tierNormalEstimate").visible, false)
             fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
                 tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },

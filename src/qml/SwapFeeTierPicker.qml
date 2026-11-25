@@ -26,8 +26,12 @@ ColumnLayout {
             ColumnLayout {
                 required property var modelData
                 spacing: 0
+                // The ring in the tertiary border over the page's background: the design system's
+                // default (border over surface) all but vanishes on the framed Fee card.
                 LogosRadioButton {
                     objectName: modelData[1]
+                    borderColor: Theme.palette.borderTertiary !== undefined ? Theme.palette.borderTertiary : Theme.palette.textTertiary
+                    boxColor: Theme.palette.background
                     text: Fees.tierName(modelData[0])
                     checkable: false
                     checked: picker.tier === modelData[0]

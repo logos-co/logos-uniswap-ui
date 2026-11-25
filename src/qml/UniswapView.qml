@@ -252,6 +252,20 @@ Item {
     readonly property url iconTriangleDown: Qt.resolvedUrl("assets/triangle-down.svg")
     readonly property url iconRefresh: Qt.resolvedUrl("assets/refresh.svg")
 
+    // The design system's radio and checkbox draw an unselected ring in `border` over a `surface`
+    // fill: on a framed card, itself `surface`, the ring all but vanishes. Inside a frame these
+    // take the stronger tertiary border over the page's background, so every option reads as one.
+    component FrameRadio: LogosRadioButton {
+        // borderTertiary, or the same grey as text on a palette that predates it.
+        borderColor: Theme.palette.borderTertiary !== undefined ? Theme.palette.borderTertiary : Theme.palette.textTertiary
+        boxColor: Theme.palette.background
+    }
+    component FrameCheckbox: LogosCheckbox {
+        // borderTertiary, or the same grey as text on a palette that predates it.
+        borderColor: Theme.palette.borderTertiary !== undefined ? Theme.palette.borderTertiary : Theme.palette.textTertiary
+        boxColor: Theme.palette.background
+    }
+
     component HoverIcon: LogosIconButton {
         flat: true
         iconColor: isActive ? Theme.palette.text : Theme.palette.textTertiary
@@ -629,14 +643,14 @@ Item {
         }
         RowLayout {
             spacing: Theme.spacing.medium
-            LogosRadioButton {
+            FrameRadio {
                 objectName: prefs.nm("slippageAuto")
                 text: "Auto (0.5%)"
                 checkable: false
                 checked: root.settings.autoSlippage === true
                 onClicked: if (root.ready) root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
             }
-            LogosRadioButton {
+            FrameRadio {
                 objectName: prefs.nm("slippageCustom")
                 text: "Custom"
                 checkable: false
@@ -1329,7 +1343,7 @@ Item {
                                         }
                                         // The disclosure says what it opens. It drives the kit's own
                                         // fields, whose bare "Advanced" box is hidden under it.
-                                        LogosCheckbox {
+                                        FrameCheckbox {
                                             objectName: "swapAdvancedToggle"
                                             text: "Advanced: slippage, deadline, gas and nonce"
                                             checkable: false
@@ -1752,7 +1766,7 @@ Item {
 
     // ── the Network sheet, opened from the header chip ───────────────────────────
     // This app's own choice, from the networks enabled in Ethereum RPC that Uniswap is on.
-    component NetworkChoice: LogosRadioButton {
+    component NetworkChoice: FrameRadio {
         required property var modelData
         objectName: "networkRow_" + modelData.chainId
         Layout.fillWidth: true
