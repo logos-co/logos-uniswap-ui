@@ -280,11 +280,12 @@ Item {
     readonly property url iconEdit: Qt.resolvedUrl("assets/edit.svg")
 
     // The Swap tab's one line on the fee and slippage. The fee reads the chosen tier and what
-    // it pays per gas at most, or "Custom" with the max fee the Fee sheet's override set.
+    // it pays per gas at most, or, while the Fee sheet's Custom is chosen, "Custom" with the max
+    // fee it set.
     readonly property string feeSummaryText: {
-        var o = advanced.overrides
-        if (o.maxFeePerGas !== undefined) {
-            var c = root.gweiCeiling(o.maxFeePerGas)
+        if (advanced.custom) {
+            var o = advanced.overrides
+            var c = o.maxFeePerGas !== undefined ? root.gweiCeiling(o.maxFeePerGas) : ""
             return "Fee: Custom" + (c.length ? " " + c : "")
         }
         var e = root.tierEstimate(swapPage.tier)
@@ -734,6 +735,208 @@ Item {
                 value: row.copyValue
                 onCopied: function (v) { root.lastCopiedValue = v }
             }
+        }
+    }
+
+    // A fee field in the Fee sheet: its name above it, its unit beside it.
+    component FeeField: ColumnLayout {
+        id: ff
+        property string label: ""
+        property string unit: ""
+        property string fieldName: ""
+        property alias text: ffInput.text
+        property alias placeholder: ffInput.placeholderText
+        property alias readOnly: ffInput.readOnly
+        signal edited()
+        Layout.fillWidth: true
+        spacing: Theme.spacing.tiny
+        LogosText {
+            objectName: ff.fieldName + "Label"
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            text: ff.label
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosTextField {
+                id: ffInput
+                objectName: ff.fieldName
+                Layout.fillWidth: true
+                onTextChanged: ff.edited()
+            }
+            LogosText {
+                objectName: ff.fieldName + "Unit"
+                Layout.preferredWidth: 36
+                text: ff.unit
+                color: Theme.palette.textSecondary
+            }
+        }
+    }
+
+    // The Fee sheet's Custom figures: max fee and priority fee in gwei, each call's gas limit, the
+    // nonce. `custom` is Custom chosen: `prefill()` turns it on with the last priced quote's figures,
+    // editing any field turns it on, `clear()` (a tier chosen) empties them and turns it off.
+    // `overrides` is what the request carries, in wei, as the kit's rules shape it.
+    component SwapFeeOverrides: ColumnLayout {
+        id: adv
+        property var quote: ({})
+        property int calls: 1
+        property var callLabels: []
+        property bool custom: false
+        property var gasTexts: []
+        // Set while the fields are written here, not by the user: such a write selects nothing.
+        property bool quiet: false
+        // The quote's fees when the user first set one of the two, as the kit holds them: read
+        // later they would come from a quote these very fields shape.
+        property string heldFee: ""
+        property string heldTip: ""
+
+        readonly property var q: quote ? quote : ({})
+        property var seen: ({})
+        onQChanged: if (q.maxFeePerGas !== undefined) seen = q
+
+        // Gwei as written ("1.7", "0.000000034") to wei, exactly; "" for anything else.
+        function weiOf(g) {
+            var s = Fees.text(g)
+            var m = /^([0-9]*)(?:\.([0-9]{0,9}))?$/.exec(s)
+            if (!m || (m[1] + (m[2] || "")).length === 0) return ""
+            var frac = m[2] || ""
+            while (frac.length < 9) frac += "0"
+            var w = (m[1] + frac).replace(/^0+/, "")
+            return w.length ? w : "0"
+        }
+        readonly property string feeWei: weiOf(maxFee.text)
+        readonly property string tipWei: weiOf(priorityFee.text)
+        readonly property var fields: ({ maxFee: feeWei, priorityFee: tipWei,
+                                         gasLimits: gasTexts.slice(0, calls), nonce: nonce.text })
+        readonly property var overrides: custom
+            ? Fees.overrides(fields, { maxFeePerGas: heldFee, maxPriorityFeePerGas: heldTip }, calls) : ({})
+        readonly property string error: {
+            if (!custom) return ""
+            if (Fees.text(maxFee.text).length && !feeWei.length) return "Max fee must be a number of gwei"
+            if (Fees.text(priorityFee.text).length && !tipWei.length) return "Priority fee must be a number of gwei"
+            return Fees.fieldError(fields, calls)
+        }
+
+        function edited() {
+            if (quiet) return
+            custom = true
+            hold()
+        }
+        function hold() {
+            if (!Fees.text(maxFee.text).length && !Fees.text(priorityFee.text).length) {
+                heldFee = ""
+                heldTip = ""
+            } else if (!heldFee.length && !heldTip.length) {
+                heldFee = seen.maxFeePerGas !== undefined ? String(seen.maxFeePerGas) : ""
+                heldTip = seen.maxPriorityFeePerGas !== undefined ? String(seen.maxPriorityFeePerGas) : ""
+            }
+        }
+        function setGas(i, t) {
+            var g = gasTexts.slice()
+            g[i] = t
+            gasTexts = g
+        }
+        function fill(fee, tip, limits, n) {
+            quiet = true
+            maxFee.text = fee
+            priorityFee.text = tip
+            for (var i = 0; i < gasFields.count; ++i) {
+                gasFields.itemAt(i).text = limits[i] || ""
+                setGas(i, limits[i] || "")
+            }
+            nonce.text = n
+            quiet = false
+        }
+        function prefill() {
+            if (custom) return
+            fill(Fees.gwei(seen.maxFeePerGas), Fees.gwei(seen.maxPriorityFeePerGas), Fees.gasLimits(seen),
+                 calls === 1 && seen.nonce !== undefined ? String(seen.nonce) : "")
+            heldFee = ""
+            heldTip = ""
+            hold()
+            custom = true
+        }
+        function clear() {
+            fill("", "", [], "")
+            gasTexts = []
+            heldFee = ""
+            heldTip = ""
+            custom = false
+        }
+        // Limits and a pin set for one set of calls must not land on another's.
+        onCallsChanged: {
+            quiet = true
+            for (var i = 0; i < gasFields.count; ++i) gasFields.itemAt(i).text = ""
+            gasTexts = []
+            nonce.text = ""
+            quiet = false
+        }
+
+        Layout.fillWidth: true
+        spacing: Theme.spacing.small
+        visible: custom
+
+        FeeField {
+            id: maxFee
+            label: "Max fee"
+            unit: "gwei"
+            fieldName: "maxFeeField"
+            placeholder: adv.seen.maxFeePerGas !== undefined ? "suggested " + Fees.gwei(adv.seen.maxFeePerGas) : ""
+            onEdited: adv.edited()
+        }
+        FeeField {
+            id: priorityFee
+            label: "Priority fee"
+            unit: "gwei"
+            fieldName: "maxPriorityFeeField"
+            placeholder: adv.seen.maxPriorityFeePerGas !== undefined
+                                   ? "suggested " + Fees.gwei(adv.seen.maxPriorityFeePerGas) : ""
+            onEdited: adv.edited()
+        }
+        Repeater {
+            id: gasFields
+            model: adv.calls
+            FeeField {
+                readonly property string estimated: Fees.gasLimits(adv.seen)[index] || ""
+                label: adv.calls > 1 ? (adv.callLabels[index] || "Call " + (index + 1)) + ": gas limit" : "Gas limit"
+                unit: "gas"
+                fieldName: adv.calls > 1 ? "gasLimitField_" + index : "gasLimitField"
+                placeholder: estimated.length ? "estimated " + estimated : ""
+                onEdited: { adv.setGas(index, text); adv.edited() }
+            }
+        }
+        // A nonce replaces ONE pending transaction, so a send of several cannot take one.
+        FeeField {
+            id: nonce
+            label: "Nonce"
+            fieldName: "nonceField"
+            readOnly: adv.calls > 1
+            placeholder: adv.calls > 1
+                ? Fees.nonces(adv.seen, adv.calls).join(", ") + ": a send of " + adv.calls + " cannot be pinned"
+                : adv.seen.nonce !== undefined ? "next is " + adv.seen.nonce : ""
+            onEdited: adv.edited()
+        }
+        LogosText {
+            objectName: "feeOverridesNote"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: "A field left empty takes the quote's figure. Choosing Low, Market or Fast clears these."
+        }
+        LogosText {
+            objectName: "advancedError"
+            visible: adv.error.length > 0
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            color: Theme.palette.error
+            text: adv.error
         }
     }
 
@@ -2076,6 +2279,9 @@ Item {
             SwapFeeTierPicker {
                 id: tierGroup
                 Layout.fillWidth: true
+                custom: advanced.custom
+                onPicked: advanced.clear()
+                onCustomPicked: advanced.prefill()
                 estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
                               fast: root.tierEstimate("fast") })
             }
@@ -2085,34 +2291,20 @@ Item {
                 tier: swapPage.tier
                 calls: swapPage.calls
                 nativeSymbol: root.nativeSymbol
-            }
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: Theme.spacing.tiny
-                LogosText {
-                    text: "Set your own"
-                    font.weight: Theme.typography.weightMedium
-                }
-                LogosText {
-                    objectName: "feeOverridesNote"
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    color: Theme.palette.textSecondary
-                    font.pixelSize: Theme.typography.secondaryText
-                    text: "Max fee, priority fee, gas limit and nonce. Left empty, the quote's figures are used."
+                // The kit's "Network fee —" row says nothing until a quote names a ceiling.
+                Component.onCompleted: {
+                    for (var i = 0; i < children.length; ++i)
+                        if (children[i].objectName === "feeRow") {
+                            var row = children[i]
+                            row.visible = Qt.binding(function () { return row.value !== "—" })
+                        }
                 }
             }
-            // The kit's fields, always open here: its bare "Advanced" box is hidden.
-            Kit.TxAdvancedFields {
+            SwapFeeOverrides {
                 id: advanced
-                open: true
                 quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
                 calls: swapPage.calls
                 callLabels: swapPage.callLabels
-                Component.onCompleted: {
-                    for (var i = 0; i < children.length; ++i)
-                        if (children[i].objectName === "advancedToggle") children[i].visible = false
-                }
             }
         }
         rightActions: [

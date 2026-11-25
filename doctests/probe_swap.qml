@@ -332,6 +332,10 @@ Item {
             check("the max fee, in gwei", probe.inFee("maxFeeRow").value, "1.7 gwei")
             check("the nonces the two calls take", probe.inFee("nonceRow").value, "7, 8")
             check("the network fee ceiling", probe.inFee("feeRow").value, "at most 0.0004 ETH (Market)")
+            probe.publishQuote({ fee: { ok: true, maxFeePerGas: "1700000000", maxPriorityFeePerGas: "1" } })
+            check("no empty \"Network fee —\" row while the quote names no ceiling", probe.inFee("feeRow").visible, false)
+            probe.publishQuote({})
+            check("...and it is back with one", probe.inFee("feeRow").visible, true)
             check("the fee basis", probe.inFee("feeSourceLabel").text, "Fee basis: eip1559")
             check("Market is the tier on", probe.inFee("tierNormal").checked, true)
             check("...a radio, not a second primary button", probe.inFee("tierNormal").variant, undefined)
@@ -344,8 +348,10 @@ Item {
             check("no estimate where fee_module named none", probe.inFee("tierSlowEstimate").visible, false)
             check("...but the chosen tier reads the live quote, the same figure as Max fee",
                   probe.inFee("tierNormalEstimate").text, "≤ 1.7 gwei")
-            check("the overrides are open, without the kit's bare Advanced box",
-                  probe.inFee("maxFeeField").visible + "/" + probe.inFee("advancedToggle").visible, "true/false")
+            check("a fourth radio, Custom", probe.inFee("tierCustom").text, "Custom")
+            check("...off while a tier is on, its fields hidden, and no bare Advanced box",
+                  probe.inFee("tierCustom").checked + "/" + probe.inFee("maxFeeField").visible + "/"
+                  + probe.inFee("advancedToggle").visible, "false/false/<missing>")
             fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
                 tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
                          fast: { maxFeePerGas: "2500000000" } } })
@@ -385,28 +391,58 @@ Item {
                   + feeSheet.rightActions[0].variant + " " + probe.primaries(feeSheet.contentItem), "1 Done 0 0")
 
             console.log("")
-            console.log("the overrides, in the Fee sheet")
-            check("a gas limit per call, named for it", probe.inFee("gasLimitField_1").placeholderText,
-                  "Swap USDC for ETH on Uniswap V3: gas limit (estimated 180000)")
-            check("two transactions cannot be pinned to one nonce", probe.inFee("nonceField").readOnly, true)
-            probe.inFee("gasLimitField_1").text = "250000"
-            probe.inFee("maxPriorityFeeField").text = "2000000000"
+            console.log("Custom: the quote's figures, labelled with their units, to edit")
+            probe.publishQuote({})
+            probe.inFee("tierCustom").clicked()
+            check("Custom on, the tiers off", probe.inFee("tierCustom").checked + "/" + probe.inFee("tierFast").checked, "true/false")
+            check("its fields show", probe.inFee("maxFeeField").visible, true)
+            check("max fee and priority fee prefilled in gwei", probe.inFee("maxFeeField").text + " / "
+                  + probe.inFee("maxPriorityFeeField").text, "1.7 / 0.1694")
+            check("...each labelled, with its unit", probe.inFee("maxFeeFieldLabel").text + " " + probe.inFee("maxFeeFieldUnit").text
+                  + ", " + probe.inFee("maxPriorityFeeFieldLabel").text + " " + probe.inFee("maxPriorityFeeFieldUnit").text,
+                  "Max fee gwei, Priority fee gwei")
+            check("each call's gas limit prefilled", probe.inFee("gasLimitField_0").text + " / " + probe.inFee("gasLimitField_1").text,
+                  "46000 / 180000")
+            check("...named for its call, in gas", probe.inFee("gasLimitField_1Label").text + " / " + probe.inFee("gasLimitField_1Unit").text,
+                  "Swap USDC for ETH on Uniswap V3: gas limit / gas")
+            check("the nonce labelled; two transactions cannot be pinned to one, so it stays empty",
+                  probe.inFee("nonceFieldLabel").text + " " + probe.inFee("nonceField").readOnly + " [" + probe.inFee("nonceField").text + "]",
+                  "Nonce true []")
+            var pre = JSON.parse(probe.quoted[probe.quoted.length - 1])
+            check("the request carries the figures, in wei", pre.maxFeePerGas + " / " + pre.maxPriorityFeePerGas + " / "
+                  + JSON.stringify(pre.gasLimits), "1700000000 / 169400000 / [\"46000\",\"180000\"]")
+            check("the line reads Custom", probe.node("feeSummary").text, "Fee: Custom ≤ 1.7 gwei")
+            probe.inFee("tierFast").clicked()
+            check("a tier chosen again clears them", probe.inFee("tierCustom").checked + " [" + probe.inFee("maxFeeField").text + "]["
+                  + probe.inFee("gasLimitField_1").text + "]", "false [][]")
+            var cleared = JSON.parse(probe.quoted[probe.quoted.length - 1])
+            check("...and the request is the tier's again", cleared.tier + " " + cleared.maxFeePerGas + " " + cleared.gasLimits, "fast undefined undefined")
+            check("...as is the line, on the tier's quote", probe.node("feeSummary").text, "Fee: Fast ≤ 1.7 gwei")
+
+            console.log("")
+            console.log("editing a field selects Custom")
+            probe.publishQuote({})
+            probe.typeInto(probe.inFee("gasLimitField_1"), "250000")
+            check("a gas limit typed turns Custom on", probe.inFee("tierCustom").checked + "/" + probe.inFee("tierFast").checked, "true/false")
+            probe.typeInto(probe.inFee("maxPriorityFeeField"), "2")
             var custom = JSON.parse(probe.quoted[probe.quoted.length - 1])
             check("the swap's own limit goes out, the approval's left estimated", JSON.stringify(custom.gasLimits),
                   JSON.stringify([null, "250000"]))
-            check("the tip as typed, with the max fee the quote suggested", custom.maxPriorityFeePerGas + " / " + custom.maxFeePerGas,
+            check("the tip as typed in gwei, with the max fee the quote suggested", custom.maxPriorityFeePerGas + " / " + custom.maxFeePerGas,
                   "2000000000 / 1700000000")
             check("and no nonce", custom.nonce, undefined)
             check("a fee set by hand reads Custom on the line", probe.node("feeSummary").text, "Fee: Custom ≤ 1.7 gwei")
+            probe.typeInto(probe.inFee("maxFeeField"), "1.2.3")
+            check("a fee that is not gwei is said in the sheet", probe.inFee("advancedError").text, "Max fee must be a number of gwei")
+            probe.typeInto(probe.inFee("maxFeeField"), "")
             probe.inFee("gasLimitField_1").text = "12x"
             check("a field the sender would refuse is said in the sheet", probe.inFee("advancedError").text, "Gas limit 2 must be a whole number")
             probe.publishQuote({})
             check("...the button held", probe.node("swapButton").enabled, false)
             check("...and the reason says where to look, not the error itself", probe.node("swapReason").text, "Fix the fee you set")
             check("...which is not on the page's error line", probe.node("swapErrorLabel").visible, false)
-            probe.inFee("gasLimitField_1").text = ""
-            probe.inFee("maxPriorityFeeField").text = ""
             probe.inFee("tierNormal").clicked()
+            check("a tier lets the bad field go too", probe.inFee("advancedError").visible + " [" + probe.inFee("gasLimitField_1").text + "]", "false []")
             feeSheet.rightActions[0].clicked()
             check("Done closes the sheet", feeSheet.visible, false)
             check("...and the line is back on the tier", probe.node("feeSummary").text, "Fee: Market ≤ 1.7 gwei")
