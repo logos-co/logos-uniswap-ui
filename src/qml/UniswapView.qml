@@ -181,15 +181,38 @@ Item {
     readonly property var fees: ready ? j(backend.feeTiersJson, "{}") : ({})
     readonly property bool feeTiersLoading: ready && backend.feeTiersLoading
     readonly property bool feesPending: feeTiersLoading && root.fees.source === undefined
-    // What a tier pays per gas, from fee_module's suggestion: "up to 1.7 gwei", or "" when the
-    // suggestion names no max fee for it. The cost of the swap itself at each tier would need a
-    // quote per tier; the sender prices the chosen one only (the summary under the picker).
+    // What a tier pays per gas at most, as a short ceiling: "≤ 1.7 gwei", "< 0.01 gwei", or ""
+    // when nothing named one. The chosen tier's line is the live quote's own max fee, the figure
+    // the Max fee row under it shows; fee_module's suggestion (read with the page's other data,
+    // not with each quote) prices the other two. Read as fee_module sends them: `tiers.<tier>`
+    // is `{ maxFeePerGas, maxPriorityFeePerGas }` in decimal wei. The cost of the swap itself at
+    // each tier would need a quote per tier; the sender prices the chosen one only.
     function tierEstimate(t) {
+        var live = swapForm.q.fee
+        if (t === swapPage.tier && live && live.ok !== false && live.feeSource !== "custom"
+            && Fees.isWhole(Fees.text(live.maxFeePerGas)))
+            return root.gweiCeiling(live.maxFeePerGas)
         var x = root.fees.tiers !== undefined && root.fees.tiers !== null ? root.fees.tiers[t] : undefined
         if (x === undefined || x === null) return ""
-        var wei = typeof x === "object" ? x.maxFeePerGas : x
-        var g = Fees.gwei(wei)
-        return g.length ? "up to " + g + " gwei" : ""
+        return root.gweiCeiling(typeof x === "object" ? x.maxFeePerGas : x)
+    }
+    // Wei per gas as a ceiling a person can read: three significant digits, never below the
+    // figure by more than a tenth of a percent ("≤ 1 gwei" for 1.000000032), and anything under
+    // a hundredth of a gwei as "< 0.01 gwei" (a testnet's base fee is a few wei). The exact
+    // figure stays in the Max fee row and the review.
+    function gweiCeiling(wei) {
+        var s = Fees.text(wei)
+        if (!Fees.isWhole(s)) return ""
+        var n = Number(s)
+        if (n === 0) return "0 gwei"
+        if (n < 1e7) return "< 0.01 gwei"
+        var g = n / 1e9
+        var r = Number(g.toPrecision(3))
+        if (r < g * 0.999) {
+            var step = Math.pow(10, Math.floor(Math.log(g) / Math.LN10) - 2)
+            r = Number((Math.ceil(g / step) * step).toPrecision(3))
+        }
+        return "≤ " + String(r) + " gwei"
     }
     readonly property var settings: ready ? j(backend.settingsJson, "{}") : ({})
     readonly property int slippageBps: settings.slippageBps !== undefined ? settings.slippageBps : 50

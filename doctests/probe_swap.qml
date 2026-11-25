@@ -313,13 +313,38 @@ Item {
                   && String(low.indicatorItem.border.color) === String(low.borderColor), true)
             check("...as is the Advanced box beside it",
                   String(probe.node("swapAdvancedToggle").boxColor) !== String(card.backgroundColor), true)
-            check("no estimate where fee_module named none", probe.node("tierNormalEstimate").visible, false)
+            check("no estimate where fee_module named none", probe.node("tierSlowEstimate").visible, false)
+            check("...but the chosen tier reads the live quote, the same figure as Max fee",
+                  probe.node("tierNormalEstimate").text, "≤ 1.7 gwei")
             fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
                 tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
                          fast: { maxFeePerGas: "2500000000" } } })
-            check("Low's ceiling per gas", probe.node("tierSlowEstimate").text, "up to 1.2 gwei")
-            check("Market's", probe.node("tierNormalEstimate").text, "up to 1.7 gwei")
-            check("Fast's", probe.node("tierFastEstimate").text, "up to 2.5 gwei")
+            check("Low's ceiling per gas", probe.node("tierSlowEstimate").text, "≤ 1.2 gwei")
+            check("Market's", probe.node("tierNormalEstimate").text, "≤ 1.7 gwei")
+            check("Fast's", probe.node("tierFastEstimate").text, "≤ 2.5 gwei")
+            console.log("")
+            console.log("Sepolia as fee_module saw it: a 15 wei base fee, tips of 2 wei or about 1 gwei")
+            fake.feeTiersJson = JSON.stringify({ ok: true, chainId: 11155111, baseFeePerGas: "15", source: "feeHistory",
+                tiers: { slow: { maxFeePerGas: "34", maxPriorityFeePerGas: "4" },
+                         normal: { maxFeePerGas: "34", maxPriorityFeePerGas: "4" },
+                         fast: { maxFeePerGas: "1000000032", maxPriorityFeePerGas: "999999987" } } })
+            probe.publishQuote({ fee: { ok: true, feeCeilingWeiDisplay: "0.0001", nativeSymbol: "ETH", feeSource: "feeHistory",
+                                        maxFeePerGas: "550000030", maxPriorityFeePerGas: "550000000", gasLimit: 226000 } })
+            check("a few wei reads as under a hundredth of a gwei, not 0.000000034", probe.node("tierSlowEstimate").text, "< 0.01 gwei")
+            check("the chosen tier is the quote's, matching Max fee below it", probe.node("tierNormalEstimate").text, "≤ 0.55 gwei")
+            check("...which says the exact figure", probe.node("maxFeeRow").value, "0.55000003 gwei")
+            check("a gwei and 32 wei reads as at most 1 gwei", probe.node("tierFastEstimate").text, "≤ 1 gwei")
+            check("three significant digits, rounded up past a tenth of a percent", v.gweiCeiling("1234567890"), "≤ 1.24 gwei")
+            check("...and kept when the rounding is a hair under", v.gweiCeiling("1230000500"), "≤ 1.23 gwei")
+            check("a fee the user set leaves the chosen tier on fee_module's figure",
+                  (function () { probe.publishQuote({ fee: { ok: true, feeSource: "custom", maxFeePerGas: "9000000000",
+                                                             maxPriorityFeePerGas: "1" } })
+                                 return probe.node("tierNormalEstimate").text })(), "< 0.01 gwei")
+            check("anything but wei reads as nothing", v.gweiCeiling("1.5"), "")
+            fake.feeTiersJson = JSON.stringify({ source: "eip1559", baseFeePerGas: "1000000000",
+                tiers: { slow: { maxFeePerGas: "1200000000" }, normal: { maxFeePerGas: "1700000000" },
+                         fast: { maxFeePerGas: "2500000000" } } })
+            probe.publishQuote({})
             probe.node("tierFast").clicked()
             check("a click picks the tier", page.tier, "fast")
             check("...and the request carries it", JSON.parse(probe.quoted[probe.quoted.length - 1]).tier, "fast")
