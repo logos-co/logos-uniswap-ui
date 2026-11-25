@@ -68,9 +68,16 @@ Item {
         if (!ready) return []
         try { return JSON.parse(backend.signerWalletsJson) } catch (e) { return [] }
     }
+    // Why an Unlock went nowhere, under the notices; a later Unlock clears it.
+    property string unlockNote: ""
     function unlockWallets(seeds) {
+        root.unlockNote = ""
         logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
-            if (res.ok) root.backend.refresh()
+            if (res.ok) { root.backend.refresh(); return }
+            if (res.error === "cancelled") return
+            root.unlockNote = res.error === "unavailable"
+                ? "No app on this device unlocks wallets."
+                : "The wallet was not unlocked. Try again."
         })
     }
 
@@ -735,6 +742,54 @@ Item {
                 color: root.chipColor(chip)
             }
         }
+        // Fully locked only: one notice per device app, as the picker's footer groups them, so a
+        // Keycard wallet sends the person to the Keycard app and a Keystore wallet to Keystore,
+        // each with its own Unlock. With an account open, the same blocks live in the picker's
+        // dropdown. The app's own, not the kit's LockedBanner, which names only "the Signer app".
+        Repeater {
+            objectName: "accountsLockedByDevice"
+            model: root.fullyLocked ? Roster.lockedByDevice(root.lockedWallets) : []
+            delegate: LogosNotice {
+                required property var modelData
+                readonly property string deviceKey: modelData.device.replace(/\s+/g, "")
+                objectName: "accountsLocked_" + deviceKey
+                Layout.fillWidth: true
+                title: modelData.count === 1 ? "1 " + modelData.device + " wallet is locked"
+                                             : modelData.count + " " + modelData.device + " wallets are locked"
+                message: modelData.hint
+                actions: [
+                    LogosButton {
+                        objectName: "accountsUnlock_" + deviceKey
+                        variant: LogosButton.Variant.Primary
+                        text: "Unlock"
+                        onClicked: root.unlockWallets(modelData.seeds)
+                    }
+                ]
+            }
+        }
+        // Why there is no swap form: there is no account to swap from until a wallet is unlocked.
+        LogosText {
+            objectName: "lockedStateNote"
+            visible: root.fullyLocked
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing.small
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Every wallet is locked, so there is no account to swap from. Unlock one and its accounts, "
+                  + "balances and swaps show here."
+        }
+        LogosText {
+            objectName: "unlockNote"
+            visible: text.length > 0
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            color: Theme.palette.error
+            text: root.unlockNote
+        }
+        Item { visible: root.fullyLocked; Layout.fillHeight: true }
+
         // A swap that needs an approval is two transactions in one request; a device that shows
         // what it signs takes one at a time, so an account only such devices hold can't sign it.
         LogosText {
@@ -809,6 +864,8 @@ Item {
             id: tabs
             objectName: "tabs"
             Layout.fillWidth: true
+            // Fully locked: nothing behind any tab has an account to show, so no tabs at all.
+            visible: !root.fullyLocked
             onCurrentIndexChanged: root.selectTab(currentIndex)
             LogosTabButton { text: "Swap" }
             LogosTabButton { text: "Activity" }
@@ -820,6 +877,7 @@ Item {
             objectName: "nav"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: !root.fullyLocked
 
             initialItem: Item {
                 objectName: "home"
