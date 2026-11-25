@@ -216,6 +216,12 @@ Item {
             console.log("the two cards read alike, and only the page's action is primary")
             check("no token to buy: its button is secondary", probe.node("buyTokenButton").variant, 1)
             check("...and says what it does", probe.node("buyTokenButton").text, "Select token")
+            check("a fresh open buys nothing: not the sell token again", page.buy, null)
+            // The balance line is the theme's secondary text.
+            check("...its label grey, a choice still to make", String(probe.node("buyTokenButton").labelItem.color),
+                  String(probe.node("sellBalance").color))
+            check("...while a picked token reads in full", String(probe.node("sellTokenButton").labelItem.color) !==
+                  String(probe.node("sellBalance").color), true)
             check("the token button is as tall as the amount field", probe.node("sellTokenButton").height,
                   probe.node("sellAmountField").height)
             var tb = probe.node("sellTokenButton")
@@ -241,7 +247,20 @@ Item {
             check("...and back", page.sellSymbol + "/" + page.buySymbol, "ETH/USDC")
             check("a pair with no amount asks for one", probe.node("swapReason").text, "Enter an amount")
             page.selectToken("buy", probe.ethToken)
-            check("the same token twice is refused", probe.node("swapReason").text, "Choose two different tokens")
+            check("picking the sell side's token to buy swaps the two, never ETH/ETH", page.sellSymbol + "/" + page.buySymbol, "USDC/ETH")
+            page.selectToken("sell", probe.ethToken)
+            check("...and the same from the other side", page.sellSymbol + "/" + page.buySymbol, "ETH/USDC")
+            check("the same token twice is still refused, should one ever reach the form",
+                  v.swapReason(v.swapState(true, probe.ethToken, probe.ethToken, "1", {}, false, "", false, false)),
+                  "Choose two different tokens")
+            page.buy = null
+            probe.node("flipButton").clicked()
+            check("a flip with nothing to buy leaves the sell side open", page.sell, null)
+            fake.tokensJson = JSON.stringify([probe.ethToken, probe.usdcToken]) + " "
+            check("...and a token refresh seeds it with another token than the one bought",
+                  page.sellSymbol + "/" + page.buySymbol, "USDC/ETH")
+            page.selectToken("sell", probe.ethToken)
+            page.selectToken("buy", probe.usdcToken)
 
             console.log("")
             console.log("1000 USDC for ETH: the form describes a request and the backend prices it")

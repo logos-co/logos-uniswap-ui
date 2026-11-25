@@ -760,7 +760,15 @@ Item {
                     // on the same line as the ticker.
                     trailingIcon.source: root.iconTriangleDown
                     trailingIcon.size: 10
+                    // No token yet: "Select token ▾" in grey, a choice still to make, not a value.
+                    trailingIcon.color: card.token ? Theme.palette.text : Theme.palette.textSecondary
                     onClicked: card.pickToken()
+                    Binding {
+                        target: tokenButton.labelItem
+                        property: "color"
+                        value: Theme.palette.textSecondary
+                        when: !card.token && tokenButton.enabled
+                    }
                 }
             }
             RowLayout {
@@ -1071,15 +1079,26 @@ Item {
                         property int calls: 1
                         property var callLabels: []
 
+                        // Picking the token the other side holds swaps the two, as Uniswap's own
+                        // picker does, so the form never holds one token twice.
                         function selectToken(side, t) {
+                            var other = side === "sell" ? swapPage.buy : swapPage.sell
+                            if (t && other && root.tokenKey(t) === root.tokenKey(other)) {
+                                flip()
+                                return
+                            }
                             if (side === "sell") swapPage.sell = t
                             else swapPage.buy = t
                         }
                         // The first enabled token that is not the other side, so a fresh screen
-                        // already sells the network coin.
+                        // already sells the network coin and buys nothing until one is picked.
                         function seedSell() {
-                            if (swapPage.sell === null && root.tokens.length > 0)
-                                swapPage.sell = root.tokens[0]
+                            if (swapPage.sell !== null) return
+                            for (var i = 0; i < root.tokens.length; ++i) {
+                                if (swapPage.buy && root.tokenKey(root.tokens[i]) === root.tokenKey(swapPage.buy)) continue
+                                swapPage.sell = root.tokens[i]
+                                return
+                            }
                         }
                         function flip() {
                             var s = swapPage.sell
