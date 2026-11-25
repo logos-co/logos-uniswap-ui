@@ -7,9 +7,9 @@ description: |
   comes up at all.
 
   That is the whole of what this proves, and it is deliberately hermetic — no
-  live chain and no funded key. The keystore is empty, so the swap button
-  says there is no account, the balances are em-dashes and Activity has nothing
-  to show. Those are the honest answers for an empty wallet, and they are answers
+  live chain and no funded key. The keystore is empty, so the line beside the
+  swap button says to add an account, the balance line says the same and
+  Activity has nothing to show. Those are the honest answers for an empty wallet, and they are answers
   only a wired-up backend can give: an unwired view renders nothing at all.
 
 sections:
@@ -170,11 +170,16 @@ sections:
               find_value: "chainChip"
               property: "text"
               value: "Ethereum"
-            - name: "An empty keystore: the swap button says so"
+            - name: "The swap button keeps its name"
               action: expect_property
               find_value: "swapButton"
               property: "text"
-              value: "No account"
+              value: "Review swap"
+            - name: "An empty keystore: the reason beside it says so"
+              action: expect_property
+              find_value: "swapReason"
+              property: "text"
+              value: "Add an account first"
             - name: "...and is disabled"
               action: expect_property
               find_value: "swapButton"

@@ -475,10 +475,13 @@ Item {
     }
 
     // ── the swap form's decisions, as functions the probe can call ───────────────
-    // The button's one line. Ordered the way Uniswap's own is: what is missing first, then
-    // what cannot be paid, then what could not be priced, then the swap itself.
-    function swapButtonText(state) {
-        if (state === "noAccount") return "No account"
+    // Why the button is off, in one line beside it; "" when it is on. The button itself keeps
+    // its name, "Review swap", as the Bitcoin wallet's Review does. Ordered the way Uniswap's own
+    // is: what is missing first, then what cannot be paid, then what could not be priced.
+    function swapReason(state) {
+        if (state === "noAccount")
+            return root.accounts.length > 0 ? "Pick an account"
+                 : root.lockedWallets.length > 0 ? "Unlock a wallet first" : "Add an account first"
         if (state === "selectToken") return "Select a token"
         if (state === "enterAmount") return "Enter an amount"
         if (state === "sameToken") return "Choose two different tokens"
@@ -488,9 +491,9 @@ Item {
         if (state === "error") return "Could not quote"
         if (state === "feeError") return "Fee unavailable"
         if (state === "pricing") return "Pricing…"
-        if (state === "acknowledge") return "Swap anyway"
+        if (state === "acknowledge") return "Tick “I understand the price impact” first"
         if (state === "pending") return "Waiting for approval"
-        return root.netKnown ? "Swap on " + root.networkLabel() : "Swap"
+        return ""
     }
     // The state, from what the form and the quote say. Pure over its arguments, so the probe
     // drives it with a fabricated backend and asserts every row of the table.
@@ -1330,9 +1333,24 @@ Item {
                                     text: root.ready ? root.backend.swapError : ""
                                 }
 
+                                // The page's one primary action, always named "Review swap"; while it
+                                // is off, the reason is beside it.
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Item { Layout.fillWidth: true }
+                                    Layout.topMargin: Theme.spacing.small
+                                    spacing: Theme.spacing.small
+                                    LogosText {
+                                        id: swapReasonLabel
+                                        objectName: "swapReason"
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        horizontalAlignment: Text.AlignRight
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.textSecondary
+                                        text: root.swapReason(swapForm.state)
+                                    }
+                                    Item { Layout.fillWidth: true; visible: !swapReasonLabel.visible }
                                     LogosSpinner {
                                         objectName: "swapSubmitSpinner"
                                         Layout.alignment: Qt.AlignVCenter
@@ -1346,7 +1364,7 @@ Item {
                                         objectName: "swapButton"
                                         Layout.preferredWidth: 220
                                         variant: LogosButton.Variant.Primary
-                                        text: root.swapButtonText(swapForm.state)
+                                        text: "Review swap"
                                         enabled: root.ready && !root.swapSubmitting
                                                  && swapForm.state === "ready" && advanced.error.length === 0
                                         onClicked: reviewDialog.open()

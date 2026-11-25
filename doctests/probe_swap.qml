@@ -208,7 +208,8 @@ Item {
             console.log("the button says what is missing, in Uniswap's own order")
             var page = probe.find(v, "swapPage")
             check("the network coin is seeded as the sell side", page.sellSymbol, "ETH")
-            check("nothing to buy yet: the button asks for a token", probe.node("swapButton").text, "Select a token")
+            check("the button keeps its name", probe.node("swapButton").text, "Review swap")
+            check("nothing to buy yet: the reason beside it asks for a token", probe.node("swapReason").text, "Select a token")
             check("...and is disabled", probe.node("swapButton").enabled, false)
             console.log("")
             console.log("the two cards read alike, and only the page's action is primary")
@@ -221,6 +222,7 @@ Item {
             fake.selectedAccount = ""
             check("no account picked: the balance line says why it is empty", probe.node("sellBalance").text,
                   "Pick an account to see the balance")
+            check("...and the reason beside the button asks for one", probe.node("swapReason").text, "Pick an account")
             fake.selectedAccount = probe.me
             check("the flip control is a 32px button", probe.node("flipButton").size, 32)
             check("...not a flat ghost", probe.node("flipButton").flat, false)
@@ -229,9 +231,9 @@ Item {
             check("a flip swaps the sides", page.sellSymbol + "/" + page.buySymbol, "USDC/ETH")
             probe.node("flipButton").clicked()
             check("...and back", page.sellSymbol + "/" + page.buySymbol, "ETH/USDC")
-            check("a pair with no amount asks for one", probe.node("swapButton").text, "Enter an amount")
+            check("a pair with no amount asks for one", probe.node("swapReason").text, "Enter an amount")
             page.selectToken("buy", probe.ethToken)
-            check("the same token twice is refused", probe.node("swapButton").text, "Choose two different tokens")
+            check("the same token twice is refused", probe.node("swapReason").text, "Choose two different tokens")
 
             console.log("")
             console.log("1000 USDC for ETH: the form describes a request and the backend prices it")
@@ -240,7 +242,7 @@ Item {
             var sellField = probe.node("sellAmountField")
             sellField.text = "1000"
             fake.quoteLoading = true
-            check("the button says it is pricing", probe.node("swapButton").text, "Pricing…")
+            check("the reason says it is pricing", probe.node("swapReason").text, "Pricing…")
             var req = JSON.parse(probe.quoted[probe.quoted.length - 1])
             check("the request names the account", req.from, probe.me)
             check("...the input as its contract", req.tokenIn, probe.usdc)
@@ -259,7 +261,7 @@ Item {
             check("the pool fee", probe.node("feeTierRow").value, "0.05%")
             check("the approval, said before it is asked", probe.node("approvalRow").value, "Approve USDC first")
             check("the fee is a ceiling, never a price", probe.node("feeRow").value, "at most 0.0004 ETH (Market)")
-            check("and the button offers the swap on the named network", probe.node("swapButton").text, "Swap on Sepolia (testnet)")
+            check("priced: no reason beside the button", probe.node("swapReason").text, "")
             check("...enabled", probe.node("swapButton").enabled, true)
 
             console.log("")
@@ -324,14 +326,14 @@ Item {
             console.log("")
             console.log("what the quote can say against the swap")
             probe.publishQuote({ insufficientBalance: true })
-            check("a balance short of the amount", probe.node("swapButton").text, "Insufficient USDC balance")
+            check("a balance short of the amount", probe.node("swapReason").text, "Insufficient USDC balance")
             probe.publishQuote({ fee: { ok: false, error: "the account cannot afford this: 0.001 ETH short" } })
-            check("a fee the account cannot pay", probe.node("swapButton").text, "Not enough ETH for gas")
+            check("a fee the account cannot pay", probe.node("swapReason").text, "Not enough ETH for gas")
             check("...with the sender's words on screen", probe.node("feeErrorLabel").text, "Fee: the account cannot afford this: 0.001 ETH short")
             probe.publishQuote({ priceImpactBps: 350 })
-            check("3.5% impact is a warning colour, not a gate", probe.node("swapButton").text, "Swap on Sepolia (testnet)")
+            check("3.5% impact is a warning colour, not a gate", probe.node("swapReason").text, "")
             probe.publishQuote({ priceImpactBps: 800 })
-            check("8% impact needs an acknowledgement", probe.node("swapButton").text, "Swap anyway")
+            check("8% impact needs an acknowledgement", probe.node("swapReason").text, "Tick “I understand the price impact” first")
             check("...and the button waits for it", probe.node("swapButton").enabled, false)
             check("...beside a warning that says the figure", probe.node("impactWarning").visible, true)
             page.impactAcknowledged = true
@@ -341,16 +343,17 @@ Item {
             sellField.text = "1000"
             fake.quoteJson = "{}"; fake.quoteRequestJson = ""
             fake.swapError = "no route found"
-            check("no route, in the module's words", probe.node("swapButton").text, "No route")
+            check("no route, in the module's words", probe.node("swapReason").text, "No route")
             check("...and the reason is on screen", probe.node("swapErrorLabel").text, "no route found")
             fake.swapError = "no answer within 8699ms: operation timed out"
-            check("any other refusal says the quote failed, not that a swap is on offer", probe.node("swapButton").text, "Could not quote")
+            check("any other refusal says the quote failed, not that a swap is on offer", probe.node("swapReason").text, "Could not quote")
             fake.swapError = ""
             probe.publishQuote({ fee: { ok: false, error: "the node did not answer" } })
-            check("a fee that could not be priced for another reason says so", probe.node("swapButton").text, "Fee unavailable")
+            check("a fee that could not be priced for another reason says so", probe.node("swapReason").text, "Fee unavailable")
             probe.publishQuote({})
             fake.pendingRequestId = "snd_9"
-            check("a swap awaiting a human holds the button", probe.node("swapButton").text, "Waiting for approval")
+            check("a swap awaiting a human holds the button", probe.node("swapReason").text, "Waiting for approval")
+            check("...which still reads Review swap", probe.node("swapButton").text, "Review swap")
             fake.pendingRequestId = ""
 
             console.log("")
