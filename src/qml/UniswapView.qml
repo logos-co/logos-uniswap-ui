@@ -812,9 +812,19 @@ Item {
         // Custom chosen before a quote named every figure (the gas limits and the nonce, or a fee
         // fee_module's tier left out): the first one that does fills the fields still empty.
         property bool awaiting: false
-        onSeenChanged: if (custom) { if (awaiting) fillFromQuote(); else followQuote() }
+        onSeenChanged: if (custom) { noteEstimates(); if (awaiting) fillFromQuote(); else followQuote() }
         // Per call: the user typed this gas limit, so a new quote leaves it alone.
         property var gasTyped: []
+        // Per call: the last estimate a quote made while the limit was not typed. Only untyped
+        // limits are sent, so the backend estimates those; a typed one comes back as typed, and
+        // comparing it with itself would never warn.
+        property var gasEstimates: []
+        function noteEstimates() {
+            var limits = Fees.gasLimits(seen), e = gasEstimates.slice()
+            for (var i = 0; i < calls; ++i)
+                if (gasTyped[i] !== true && limits[i] !== undefined) e[i] = limits[i]
+            gasEstimates = e
+        }
 
         readonly property bool gasEmpty: {
             for (var i = 0; i < calls; ++i)
@@ -831,7 +841,7 @@ Item {
         readonly property var lowGas: {
             var out = []
             if (!custom) return out
-            var est = Fees.gasLimits(seen)
+            var est = gasEstimates
             for (var i = 0; i < calls; ++i) {
                 var t = Fees.text(gasTexts[i]), e = est[i]
                 if (gasTyped[i] === true && /^[0-9]+$/.test(t) && e !== undefined && /^[0-9]+$/.test(String(e))
@@ -853,8 +863,12 @@ Item {
         }
         readonly property string feeWei: weiOf(maxFee.text)
         readonly property string tipWei: weiOf(priorityFee.text)
+        // Only the limits the user typed go out: an untyped one is "" (null in the request), so the
+        // backend estimates it and the next quote carries a fresh figure. Sending the prefilled
+        // limits made every quote echo them back (the sender uses a caller's limit verbatim).
         readonly property var fields: ({ maxFee: feeWei, priorityFee: tipWei,
-                                         gasLimits: gasTexts.slice(0, calls), nonce: nonce.text })
+                                         gasLimits: gasTexts.slice(0, calls).map(function (t, i) { return gasTyped[i] === true ? t : "" }),
+                                         nonce: nonce.text })
         readonly property var overrides: custom
             ? Fees.overrides(fields, { maxFeePerGas: heldFee, maxPriorityFeePerGas: heldTip }, calls) : ({})
         readonly property string error: {
@@ -913,6 +927,7 @@ Item {
             var f = q.maxFeePerGas !== undefined ? q : Fees.text(t.maxFeePerGas).length ? t : seen
             fill(Fees.gwei(f.maxFeePerGas), Fees.gwei(f.maxPriorityFeePerGas), Fees.gasLimits(seen), "")
             gasTyped = []
+            gasEstimates = Fees.gasLimits(seen).slice()
             heldFee = ""
             heldTip = ""
             hold()
@@ -954,6 +969,7 @@ Item {
             fill("", "", [], "")
             gasTexts = []
             gasTyped = []
+            gasEstimates = []
             heldFee = ""
             heldTip = ""
         }
@@ -961,7 +977,7 @@ Item {
         function snapshot() {
             return { custom: custom, fee: maxFee.text, tip: priorityFee.text, gas: gasTexts.slice(0, calls),
                      nonce: nonce.text, heldFee: heldFee, heldTip: heldTip, calls: calls, incomplete: incomplete,
-                     gasTyped: gasTyped.slice() }
+                     gasTyped: gasTyped.slice(), gasEstimates: gasEstimates.slice() }
         }
         // Back to a snapshot: its Custom if it was a whole one for these calls, else the tier.
         function restore(snap) {
@@ -971,6 +987,7 @@ Item {
             }
             fill(snap.fee, snap.tip, snap.gas, snap.nonce)
             gasTyped = snap.gasTyped || []
+            gasEstimates = snap.gasEstimates || []
             heldFee = snap.heldFee
             heldTip = snap.heldTip
             custom = true
@@ -983,6 +1000,7 @@ Item {
             for (var i = 0; i < gasFields.count; ++i) gasFields.itemAt(i).text = ""
             gasTexts = []
             gasTyped = []
+            gasEstimates = []
             nonce.text = ""
             quiet = false
             awaiting = custom

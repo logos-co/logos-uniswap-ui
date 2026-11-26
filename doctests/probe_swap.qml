@@ -164,6 +164,13 @@ Item {
                           { gasLimit: 180000, label: "Swap USDC for ETH on Uniswap V3" }] }
         }
         for (var k in extra) q[k] = extra[k]
+        // As the sender does: a limit the request carries is used verbatim, only a null one is
+        // estimated. Without this echo the probe can't see a UI that sends its prefilled limits.
+        var asked = r ? (JSON.parse(r).gasLimits || []) : []
+        var legs = q.fee && q.fee.legs
+        if (legs) for (var i = 0; i < legs.length; ++i)
+            if (asked[i] !== null && asked[i] !== undefined && String(asked[i]).length) legs[i].gasLimit = Number(asked[i])
+        if (q.fee && legs && legs.length === 1 && asked[0]) q.fee.gasLimit = Number(asked[0])
         fake.quoteJson = JSON.stringify(q)
         fake.quoteRequestJson = r
     }
@@ -475,8 +482,9 @@ Item {
                   probe.inFee("nonceFieldLabel").text + " " + probe.inFee("nonceField").readOnly + " [" + probe.inFee("nonceField").text + "]",
                   "Nonce true []")
             var pre = JSON.parse(probe.quoted[probe.quoted.length - 1])
-            check("the request carries the figures, in wei", pre.maxFeePerGas + " / " + pre.maxPriorityFeePerGas + " / "
-                  + JSON.stringify(pre.gasLimits), "1700000000 / 169400000 / [\"46000\",\"180000\"]")
+            check("the request carries the fees in wei; the prefilled gas limits aren't sent, so they stay estimated",
+                  pre.maxFeePerGas + " / " + pre.maxPriorityFeePerGas + " / " + JSON.stringify(pre.gasLimits),
+                  "1700000000 / 169400000 / undefined")
             check("the line reads Custom", probe.node("feeSummary").text, "Fee: Custom ≤ 1.7 gwei")
             probe.inFee("tierFast").clicked()
             check("a tier chosen again clears them", probe.inFee("tierCustom").checked + " [" + probe.inFee("maxFeeField").text + "]["
@@ -555,14 +563,16 @@ Item {
             check("...its placeholder names the next one", probe.inFee("nonceField").placeholderText, "optional, next is 7")
             check("...Done is free without it", feeSheet.rightActions[0].enabled, true)
             check("...and the request pins no nonce", JSON.parse(probe.quoted[probe.quoted.length - 1]).nonce, undefined)
+            check("...a prefilled limit isn't sent: the backend estimates it", JSON.stringify(JSON.parse(probe.quoted[probe.quoted.length - 1]).gasLimits), undefined)
             probe.publishQuote(one(260000))
             check("a new quote (another amount or route): the gas limit follows it", probe.inFee("gasLimitField").text, "260000")
             probe.typeInto(probe.inFee("gasLimitField"), "200000")
+            check("a typed limit goes out as typed", JSON.stringify(JSON.parse(probe.quoted[probe.quoted.length - 1]).gasLimits), JSON.stringify(["200000"]))
             probe.publishQuote(one(300000))
-            check("a limit typed by hand stays through the next quote", probe.inFee("gasLimitField").text, "200000")
-            check("...and below the quote's estimate it warns, without holding Done",
+            check("a limit typed by hand stays through the next quote (which echoes it)", probe.inFee("gasLimitField").text, "200000")
+            check("...and below the last estimate made before it was typed, it warns, without holding Done",
                   probe.inFee("gasBelowEstimateNote").visible + " " + feeSheet.rightActions[0].enabled + " "
-                  + (probe.inFee("gasBelowEstimateNote").text.indexOf("estimate 300000") >= 0), "true true true")
+                  + (probe.inFee("gasBelowEstimateNote").text.indexOf("estimate 260000") >= 0), "true true true")
             probe.typeInto(probe.inFee("nonceField"), "7")
             check("a nonce typed by hand is pinned", JSON.parse(probe.quoted[probe.quoted.length - 1]).nonce, 7)
             fake.lastSwapOutcomeJson = JSON.stringify({ status: "broadcast", hashes: ["0xabc"] })
