@@ -27,9 +27,11 @@ Item {
     function node(name) { return find(view.item, name) || ({ text: "<missing>", visible: "<missing>" }) }
 
     property var selections: []
+    property var requests: []
+    property var reply: null
     property var logos: ({
         module: function (n) { return fake }, isViewModuleReady: function (n) { return true },
-        request: function (intent, params, cb) {}
+        request: function (intent, params, cb) { probe.requests = probe.requests.concat([{ intent: intent, params: params }]); probe.reply = cb }
     })
 
     readonly property var roster: [
@@ -60,6 +62,7 @@ Item {
         property string accountLabelsJson: JSON.stringify({ "70997970c51812dc3a010c7d01b50e0d17dc79c8": "Spare" })
         property string accountWalletsJson: "{}"
         property string accountRosterJson: JSON.stringify(probe.roster)
+        property string signerWalletsJson: JSON.stringify([{ seed: "s1", name: "Main", locked: false, kinds: ["keystore"] }])
         property string tokensJson: "[]"
         property string balancesJson: "[]"
         property string balancesRoute: "direct"
@@ -110,11 +113,11 @@ Item {
             check("three rows", picker.model.length, 3)
             check("the selected account by name", probe.node("accountPickerSelectedName").text, "Savings")
             check("...and address", probe.node("accountPickerSelectedAddress").text, "0x8626…1199")
-            check("the wallet line in the header", probe.node("accountPickerSelectedWallet").visible, true)
-            check("...reads the wallet", probe.node("accountPickerSelectedWallet").text, "Wallet “Main” · 73c5da0a · account 0")
+            check("one line in the header: no wallet line", probe.node("accountPickerSelectedWallet").visible, false)
+            check("...the wallet is in its summary", String(picker.displayText).indexOf("Wallet “Main” · 73c5da0a · account 0") > 0, true)
             check("no signer chips in the header", probe.node("accountPickerSelectedSigners").visible, false)
             check("the address is not repeated under the picker", probe.node("addressLabel").text, "<missing>")
-            check("the chain picker shares the header row", probe.node("chainPicker").parent === picker.parent, true)
+            check("the network chip shares the header row", probe.node("chainChip").parent === picker.parent, true)
             probe.node("accountPickerSelectedCopy").copy()
             check("the header copies the full address", view.item.lastCopiedValue, probe.mine)
             check("the keystore signs a swap with an approval: no note", probe.node("accountBundleNote").visible, false)
@@ -131,6 +134,36 @@ Item {
             fake.selectedAccount = probe.later
             check("by name", probe.node("accountPickerSelectedName").text, "Spare")
             check("no note", probe.node("accountBundleNote").visible, false)
+
+            console.log("")
+            console.log("a wallet locked beside an open one: its Unlock is in the picker, not on the page")
+            fake.signerWalletsJson = JSON.stringify([{ seed: "s1", name: "Main", locked: false, kinds: ["keystore"] },
+                                                     { seed: "s2", name: "Card", locked: true, kinds: ["keycard"] }])
+            check("the picker lists it", picker.lockedWallets.length, 1)
+            check("no notice on the page", probe.node("accountsLocked_Keycard").visible, "<missing>")
+            check("the tabs stay", probe.node("tabs").visible, true)
+
+            console.log("")
+            console.log("every wallet locked: one notice per device app, and no swap form")
+            fake.signerWalletsJson = JSON.stringify([{ seed: "s1", name: "Main", locked: true, kinds: ["keystore"] },
+                                                     { seed: "s2", name: "Card", locked: true, kinds: ["keycard"] },
+                                                     { seed: "s3", name: "Spare", locked: true, kinds: ["keystore"] }])
+            fake.accountsJson = "[]"
+            fake.accountRosterJson = "[]"
+            fake.selectedAccount = ""
+            check("Keystore's notice counts its wallets", probe.node("accountsLocked_Keystore").title, "2 Keystore wallets are locked")
+            check("Keycard's has its own", probe.node("accountsLocked_Keycard").title, "1 Keycard wallet is locked")
+            check("...and no notice names the Signer app", String(probe.node("accountsLocked_Keystore").message).indexOf("Signer app"), -1)
+            check("no picker with nothing to pick", picker.visible, false)
+            check("no tabs", probe.node("tabs").visible, false)
+            check("no swap form", probe.node("nav").visible, false)
+            check("the page says why", probe.node("lockedStateNote").visible, true)
+            var unlock = probe.node("accountsUnlock_Keystore")
+            unlock.clicked()
+            check("Unlock asks for Keystore's wallets only", JSON.stringify(probe.requests[probe.requests.length - 1]),
+                  JSON.stringify({ intent: "wallets.unlock", params: { seeds: ["s1", "s3"] } }))
+            probe.reply({ ok: false, error: "unavailable" })
+            check("an Unlock nobody answers says so", probe.node("unlockNote").text, "No app on this device unlocks wallets.")
 
             console.log("")
             console.log(probe.failures ? "RESULT: FAILURES" : "RESULT: ALL PASS")

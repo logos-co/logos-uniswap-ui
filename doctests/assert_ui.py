@@ -88,16 +88,46 @@ check("...and the only client the view's C++ calls", sorted(set(re.findall(r"mod
 check("...so no module the backend composes is reached around it",
       re.search(r"keystore_module|tx_sender_module|uniswap_module|eth_wallet_backend", CPP + HDR) is None)
 check("the chain selector is part of the contract and view",
-      "selectNetwork(int chainId)" in REP and 'objectName: "chainPicker"' in QML)
-check("the chain selector follows both halves of backend initialization",
-      "onModelChanged: syncIndex()" in QML
-      and "function onNetChanged() { chainPicker.syncIndex() }" in QML)
+      "selectNetwork(int chainId)" in REP and 'objectName: "chainChip"' in QML
+      and 'objectName: "networkSheet"' in QML)
+check("the chip opens the Network sheet, whose rows select a chain",
+      "TapHandler { onTapped: networkSheet.open() }" in QML
+      and "root.backend.selectNetwork(modelData.chainId)" in QML)
+check("...and a row is ticked by the published chain, not by an index",
+      "checked: modelData.chainId === root.net.chainId" in QML)
 
 print("0e. the swap is offered only when the quote says it can be paid for")
 check("the button is enabled on the ready state alone",
       re.search(r'objectName: "swapButton".*?enabled: root\.ready && !root\.swapSubmitting\s*&& swapForm\.state === "ready"', QML, re.S) is not None)
 check("the review confirm is what submits", "root.backend.submitSwap(swapForm.formRequest)" in QML)
 check("...and the swap button only opens the review", re.search(r'objectName: "swapButton".*?onClicked: reviewDialog\.open\(\)', QML, re.S) is not None)
+
+print("0f. an error shows only where its action was taken")
+check("the review shows its own refusal, never the live swapError",
+      "error: shownError" in QML and "error: root.ready ? root.backend.swapError" not in QML)
+check("no line renders swapError or lastError raw",
+      re.search(r"text: root\.ready \? root\.backend\.(swapError|lastError)", QML) is None)
+check("errors lose their machine code", "Errors.human(" in QML
+      and "replace(/^[A-Z][A-Za-z]+:\\s*/" in (SRC / "qml" / "errors.js").read_text())
+check("a Confirm nobody answers is let go", "onTriggered: root.submitTimedOut()" in QML)
+
+print("0g. the swap's action is pinned, and no scroll view draws a horizontal bar")
+check("the swap form scrolls above a pinned action bar holding Review swap",
+      re.search(r'objectName: "swapScroll".*?objectName: "swapActionBar".*?objectName: "swapReason".*?objectName: "swapButton"', QML, re.S) is not None)
+check("every scroll view turns its horizontal bar off",
+      QML.count("LogosScrollView {"), QML.count("ScrollBar.horizontal.policy: ScrollBar.AlwaysOff"))
+
+print("0h. no reason repeats what a button says, and the Activity tab is its cards")
+check("\"Select a token\" is no reason beside Review swap (the Buy button says Select token)",
+      '"Select a token"' not in QML)
+check("the Activity tab has no explanatory line over its cards",
+      "Swaps made from this app" not in QML and '"activityNote"' not in QML)
+
+print("0i. no way out of the Fee sheet with Custom half filled in")
+check("the Fee sheet's Done is off while Custom has an empty field",
+      re.search(r'objectName: "feeSheetDone".*?enabled: !advanced\.incomplete', QML, re.S) is not None)
+check("...and any other close (X, Esc, outside) puts back what the sheet opened with",
+      re.search(r'id: feeSheet.*?onOpened: openedWith = advanced\.snapshot\(\)\s*onClosed: if \(advanced\.incomplete\) advanced\.restore\(openedWith\)', QML, re.S) is not None)
 
 print()
 print("RESULT:", f"{failures} FAILED" if failures else "ALL PASS")

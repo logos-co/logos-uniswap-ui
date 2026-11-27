@@ -5,8 +5,10 @@ import Logos.Controls
 import Logos.Icons
 import Logos.Theme
 import "kit" as Kit
+import "kit/fees.js" as Fees
 import "accountkit" as Accounts
 import "accountkit/roster.js" as Roster
+import "errors.js" as Errors
 
 // The Uniswap app. One question per screen, as the wallet: sell one token, buy another,
 // everything else under the two cards, and this app's network visible at all times. The
@@ -39,11 +41,40 @@ Item {
     // From the click until the backend has either taken the swap or refused it. Both clear
     // it, or a refusal leaves the button dead with nothing on the page to revive it.
     property bool swapSubmitting: false
+    // ── one error, one place ─────────────────────────────────────────────────────
+    // swapError stays set until the next success. The review keeps its own refusal, read as its
+    // Confirm is answered, and shows it itself; the page's line shows only what the page did:
+    // never while a sheet is up, and never an error already on screen when one opened or closed.
+    readonly property bool sheetUp: reviewDialog.visible || networkSheet.visible || tokenPicker.visible
+                                    || feeSheet.visible || slippageSheet.visible
+    property string swapErrorSeen: ""
+    onSheetUpChanged: root.swapErrorSeen = root.ready ? root.backend.swapError : ""
+    readonly property string swapPageError:
+        !ready || sheetUp || root.backend.swapError === swapErrorSeen ? "" : Errors.human(root.backend.swapError)
+    // The wallet-wide read failure, under the header; held back while a sheet is up.
+    readonly property string pageError: !ready || sheetUp ? "" : Errors.human(root.backend.lastError)
+
+    // A submit nobody answered: the backend lets its own claim lapse with an error, but a call
+    // it refused to start says nothing at all, so the button must not wait forever on it.
+    Timer {
+        id: submitWatchdog
+        interval: 95000
+        running: root.swapSubmitting
+        onTriggered: root.submitTimedOut()
+    }
+    function submitTimedOut() {
+        if (!root.swapSubmitting) return
+        root.swapSubmitting = false
+        reviewDialog.shownError = "The swap did not answer. Nothing was sent; try again."
+    }
+
     property string approvalNote: ""
     property string intentNote: ""
     property string dismissedOutcome: ""
 
     readonly property var swapOutcome: root.ready ? j(backend.lastSwapOutcomeJson, "{}") : ({})
+    // A pinned nonce is spent by the swap that carried it: the next swap must not reuse it.
+    onSwapOutcomeChanged: if (swapOutcome.status === "broadcast") advanced.clearNonce()
     readonly property var outcomeHashes: root.swapOutcome.hashes !== undefined
                                          ? root.swapOutcome.hashes : []
     function dismissOutcome() { root.dismissedOutcome = root.backend.lastSwapOutcomeJson }
@@ -68,9 +99,16 @@ Item {
         if (!ready) return []
         try { return JSON.parse(backend.signerWalletsJson) } catch (e) { return [] }
     }
+    // Why an Unlock went nowhere, under the notices; a later Unlock clears it.
+    property string unlockNote: ""
     function unlockWallets(seeds) {
+        root.unlockNote = ""
         logos.request("wallets.unlock", ({ seeds: seeds }), function (res) {
-            if (res.ok) root.backend.refresh()
+            if (res.ok) { root.backend.refresh(); return }
+            if (res.error === "cancelled") return
+            root.unlockNote = res.error === "unavailable"
+                ? "No app on this device unlocks wallets."
+                : "The wallet was not unlocked. Try again."
         })
     }
 
@@ -110,7 +148,13 @@ Item {
             }
         }
         function onSwapErrorChanged() {
-            if (root.backend.swapError.length > 0) root.swapSubmitting = false
+            if (root.backend.swapError.length > 0) {
+                // A refusal of the review's own Confirm: the review says why, as it was given.
+                if (root.swapSubmitting) reviewDialog.shownError = Errors.human(root.backend.swapError)
+                root.swapSubmitting = false
+            } else {
+                root.swapErrorSeen = ""
+            }
         }
         function onPendingApprovalHandleChanged() {
             if (root.backend.pendingApprovalHandle !== "") root.askToApprove()
@@ -140,6 +184,39 @@ Item {
     readonly property var fees: ready ? j(backend.feeTiersJson, "{}") : ({})
     readonly property bool feeTiersLoading: ready && backend.feeTiersLoading
     readonly property bool feesPending: feeTiersLoading && root.fees.source === undefined
+    // What a tier pays per gas at most, as a short ceiling: "≤ 1.7 gwei", "< 0.01 gwei", or ""
+    // when nothing named one. The chosen tier's line is the live quote's own max fee, the figure
+    // the Max fee row under it shows; fee_module's suggestion (read with the page's other data,
+    // not with each quote) prices the other two. Read as fee_module sends them: `tiers.<tier>`
+    // is `{ maxFeePerGas, maxPriorityFeePerGas }` in decimal wei. The cost of the swap itself at
+    // each tier would need a quote per tier; the sender prices the chosen one only.
+    function tierEstimate(t) {
+        var live = swapForm.q.fee
+        if (t === swapPage.tier && live && live.ok !== false && live.feeSource !== "custom"
+            && Fees.isWhole(Fees.text(live.maxFeePerGas)))
+            return root.gweiCeiling(live.maxFeePerGas)
+        var x = root.fees.tiers !== undefined && root.fees.tiers !== null ? root.fees.tiers[t] : undefined
+        if (x === undefined || x === null) return ""
+        return root.gweiCeiling(typeof x === "object" ? x.maxFeePerGas : x)
+    }
+    // Wei per gas as a ceiling a person can read: three significant digits, never below the
+    // figure by more than a tenth of a percent ("≤ 1 gwei" for 1.000000032), and anything under
+    // a hundredth of a gwei as "< 0.01 gwei" (a testnet's base fee is a few wei). The exact
+    // figure stays in the Max fee row and the review.
+    function gweiCeiling(wei) {
+        var s = Fees.text(wei)
+        if (!Fees.isWhole(s)) return ""
+        var n = Number(s)
+        if (n === 0) return "0 gwei"
+        if (n < 1e7) return "< 0.01 gwei"
+        var g = n / 1e9
+        var r = Number(g.toPrecision(3))
+        if (r < g * 0.999) {
+            var step = Math.pow(10, Math.floor(Math.log(g) / Math.LN10) - 2)
+            r = Number((Math.ceil(g / step) * step).toPrecision(3))
+        }
+        return "≤ " + String(r) + " gwei"
+    }
     readonly property var settings: ready ? j(backend.settingsJson, "{}") : ({})
     readonly property int slippageBps: settings.slippageBps !== undefined ? settings.slippageBps : 50
     readonly property int deadlineMins: settings.deadlineMins !== undefined ? settings.deadlineMins : 30
@@ -183,21 +260,69 @@ Item {
     readonly property string nativeSymbol: net.nativeSymbol !== undefined ? net.nativeSymbol : ""
     readonly property bool isTestnet: net.testnet === true
     function networkLabel() { return netKnown ? netName + (isTestnet ? " (testnet)" : "") : "—" }
-    function networkIndex() {
-        for (var i = 0; i < networks.length; ++i)
-            if (networks[i].chainId === net.chainId) return i
-        return -1
-    }
     function networkChoiceLabel(n) {
         var name = n.name !== undefined && String(n.name).length ? String(n.name) : "Chain " + n.chainId
-        return name + (n.testnet === true ? " · TESTNET" : "")
+        return name + " · " + n.chainId
     }
     readonly property bool swapPending: ready && backend.pendingRequestId.length > 0
     readonly property string selected: ready ? backend.selectedAccount : ""
+    // The wallets still locked, and the two states without an account to swap from: nothing at
+    // all yet, and everything locked.
+    readonly property var lockedWallets: Roster.lockedWallets(root.signerWallets)
+    readonly property bool noAccounts: ready && accounts.length === 0
+    readonly property bool fullyLocked: noAccounts && lockedWallets.length > 0
+    readonly property var mainnetChains: networks.filter(function (n) { return n.testnet !== true })
+    readonly property var testnetChains: networks.filter(function (n) { return n.testnet === true })
 
     readonly property url iconArrowLeft: Qt.resolvedUrl("assets/arrow-left.svg")
     readonly property url iconTriangleDown: Qt.resolvedUrl("assets/triangle-down.svg")
     readonly property url iconRefresh: Qt.resolvedUrl("assets/refresh.svg")
+    readonly property url iconArrowDown: Qt.resolvedUrl("assets/arrow-down.svg")
+    // LogosIcons has no pencil yet: Remix pencil-line, bundled with the other app icons.
+    readonly property url iconEdit: Qt.resolvedUrl("assets/edit.svg")
+
+    // The Swap tab's one line on the fee and slippage. The fee reads the chosen tier and what
+    // it pays per gas at most, or, while the Fee sheet's Custom is chosen, "Custom" with the max
+    // fee it set.
+    readonly property string feeSummaryText: {
+        if (advanced.custom) {
+            var o = advanced.overrides
+            var c = o.maxFeePerGas !== undefined ? root.gweiCeiling(o.maxFeePerGas) : ""
+            return "Fee: Custom" + (c.length ? " " + c : "")
+        }
+        var e = root.tierEstimate(swapPage.tier)
+        return "Fee: " + Fees.tierName(swapPage.tier) + (e.length ? " " + e : "")
+    }
+    readonly property string slippageSummaryText:
+        "Max slippage: " + (root.settings.autoSlippage === true ? "Auto " : "Custom ") + (root.slippageBps / 100) + "%"
+
+    // A pencil beside a summary: a 32px ghost button in secondary grey, full text on hover.
+    component EditIcon: LogosIconButton {
+        property string tip: ""
+        size: 32
+        iconSize: 16
+        flat: true
+        iconSource: root.iconEdit
+        iconColor: isActive ? Theme.palette.text : Theme.palette.textSecondary
+        Accessible.name: tip
+        ToolTip.text: tip
+        ToolTip.visible: hovered
+        ToolTip.delay: 400
+    }
+
+    // The design system's radio and checkbox draw an unselected ring in `border` over a `surface`
+    // fill: on a framed card, itself `surface`, the ring all but vanishes. Inside a frame these
+    // take the stronger tertiary border over the page's background, so every option reads as one.
+    component FrameRadio: LogosRadioButton {
+        // borderTertiary, or the same grey as text on a palette that predates it.
+        borderColor: Theme.palette.borderTertiary !== undefined ? Theme.palette.borderTertiary : Theme.palette.textTertiary
+        boxColor: Theme.palette.background
+    }
+    component FrameCheckbox: LogosCheckbox {
+        // borderTertiary, or the same grey as text on a palette that predates it.
+        borderColor: Theme.palette.borderTertiary !== undefined ? Theme.palette.borderTertiary : Theme.palette.textTertiary
+        boxColor: Theme.palette.background
+    }
 
     component HoverIcon: LogosIconButton {
         flat: true
@@ -432,6 +557,59 @@ Item {
         if (whole === "0" && frac.length === 0) return d > 0 && /[1-9]/.test(s) ? "<0.00001" : "0"
         return frac.length ? whole + "." + frac : whole
     }
+    // Base-unit arithmetic on decimal strings: a balance in wei outgrows a JS number, and Swap
+    // max must come to the exact figure the field then holds. "" for anything not a number.
+    function toBase(amount, decimals) {
+        var s = String(amount || "").trim()
+        if (!/^[0-9]*\.?[0-9]*$/.test(s) || !/[0-9]/.test(s)) return ""
+        var d = decimals === undefined ? 18 : decimals
+        var parts = s.split(".")
+        var frac = (parts[1] || "")
+        if (frac.length > d) return ""
+        while (frac.length < d) frac += "0"
+        return ((parts[0] || "") + frac).replace(/^0+(?=[0-9])/, "")
+    }
+    function fromBase(base, decimals) {
+        var s = String(base || "")
+        if (!/^[0-9]+$/.test(s)) return ""
+        var d = decimals === undefined ? 18 : decimals
+        while (s.length <= d) s = "0" + s
+        var whole = s.substring(0, s.length - d).replace(/^0+(?=[0-9])/, "")
+        var frac = s.substring(s.length - d).replace(/0+$/, "")
+        return frac.length ? whole + "." + frac : whole
+    }
+    function cmpBase(a, b) {
+        a = String(a).replace(/^0+(?=[0-9])/, ""); b = String(b).replace(/^0+(?=[0-9])/, "")
+        if (a.length !== b.length) return a.length < b.length ? -1 : 1
+        return a < b ? -1 : a > b ? 1 : 0
+    }
+    // a - b, or "" when b is more than a.
+    function subBase(a, b) {
+        if (!/^[0-9]+$/.test(String(a)) || !/^[0-9]+$/.test(String(b)) || cmpBase(a, b) < 0) return ""
+        var x = String(a), y = String(b), out = "", borrow = 0
+        while (y.length < x.length) y = "0" + y
+        for (var i = x.length - 1; i >= 0; --i) {
+            var dgt = Number(x[i]) - Number(y[i]) - borrow
+            borrow = dgt < 0 ? 1 : 0
+            out = String(dgt + (borrow ? 10 : 0)) + out
+        }
+        return out.replace(/^0+(?=[0-9])/, "")
+    }
+    // a × n for a small whole n (a gas limit).
+    function mulBase(a, n) {
+        if (!/^[0-9]+$/.test(String(a)) || !(n >= 0)) return ""
+        var x = String(a), out = "", carry = 0
+        for (var i = x.length - 1; i >= 0; --i) {
+            var v = Number(x[i]) * n + carry
+            out = String(v % 10) + out
+            carry = Math.floor(v / 10)
+        }
+        return ((carry > 0 ? String(carry) : "") + out).replace(/^0+(?=[0-9])/, "")
+    }
+    // A swap's gas before any quote has priced one: a router swap from ether is one call, and
+    // Uniswap's run 120k to 200k; kept back only until a quote names its own ceiling.
+    readonly property int swapGasGuess: 300000
+
     function txWhen(ts) {
         if (!ts) return ""
         return Qt.formatDateTime(new Date(ts * 1000), "MMM d, HH:mm")
@@ -455,11 +633,15 @@ Item {
     }
 
     // ── the swap form's decisions, as functions the probe can call ───────────────
-    // The button's one line. Ordered the way Uniswap's own is: what is missing first, then
-    // what cannot be paid, then what could not be priced, then the swap itself.
-    function swapButtonText(state) {
-        if (state === "noAccount") return "No account"
-        if (state === "selectToken") return "Select a token"
+    // Why the button is off, in one line beside it; "" when it is on. The button itself keeps
+    // its name, "Review swap", as the Bitcoin wallet's Review does. Ordered the way Uniswap's own
+    // is: what is missing first, then what cannot be paid, then what could not be priced.
+    function swapReason(state) {
+        if (state === "noAccount")
+            return root.accounts.length > 0 ? "Pick an account"
+                 : root.lockedWallets.length > 0 ? "Unlock a wallet first" : "Add an account first"
+        // No token to buy: the Buy card's own button already says "Select token".
+        if (state === "selectToken") return ""
         if (state === "enterAmount") return "Enter an amount"
         if (state === "sameToken") return "Choose two different tokens"
         if (state === "insufficient") return "Insufficient " + swapPage.sellSymbol + " balance"
@@ -468,9 +650,9 @@ Item {
         if (state === "error") return "Could not quote"
         if (state === "feeError") return "Fee unavailable"
         if (state === "pricing") return "Pricing…"
-        if (state === "acknowledge") return "Swap anyway"
+        if (state === "acknowledge") return "Tick “I understand the price impact” first"
         if (state === "pending") return "Waiting for approval"
-        return root.netKnown ? "Swap on " + root.networkLabel() : "Swap"
+        return ""
     }
     // The state, from what the form and the quote say. Pure over its arguments, so the probe
     // drives it with a fabricated backend and asserts every row of the table.
@@ -559,7 +741,498 @@ Item {
         }
     }
 
-    // One of the two cards: what you sell, what you buy.
+    // A fee field in the Fee sheet: its name above it, its unit beside it.
+    component FeeField: ColumnLayout {
+        id: ff
+        property string label: ""
+        property string unit: ""
+        property string fieldName: ""
+        property alias text: ffInput.text
+        property alias placeholder: ffInput.placeholderText
+        property alias readOnly: ffInput.readOnly
+        signal edited()
+        Layout.fillWidth: true
+        spacing: Theme.spacing.tiny
+        LogosText {
+            objectName: ff.fieldName + "Label"
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            text: ff.label
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacing.small
+            LogosTextField {
+                id: ffInput
+                objectName: ff.fieldName
+                Layout.fillWidth: true
+                onTextChanged: ff.edited()
+            }
+            LogosText {
+                objectName: ff.fieldName + "Unit"
+                Layout.preferredWidth: 36
+                text: ff.unit
+                color: Theme.palette.textSecondary
+            }
+        }
+    }
+
+    // The Fee sheet's Custom figures: max fee and priority fee in gwei, each call's gas limit, the
+    // nonce. `custom` is Custom chosen: `prefill()` turns it on with the last priced quote's figures
+    // (the two fees from the chosen tier's fee_module figures while nothing is quoted), editing any
+    // field turns it on, `clear()` (a tier chosen) empties them and turns it off. `incomplete` is
+    // Custom with a fee or a gas limit still empty: the sheet's Done waits on it, and closing the
+    // sheet any other way puts back what was on when it opened. The nonce is optional and never
+    // filled in here: a pinned nonce replaces a pending transaction, so it is only what the user
+    // typed, and a sent swap clears it. Gas limits follow each new quote until the user types one. `overrides` is what the request carries, in
+    // wei, as the kit's rules shape it.
+    component SwapFeeOverrides: ColumnLayout {
+        id: adv
+        property var quote: ({})
+        // The chosen tier as fee_module sent it: `{ maxFeePerGas, maxPriorityFeePerGas }` in wei,
+        // or the max fee alone; the fees Custom starts from before any quote.
+        property var tierFee: null
+        property int calls: 1
+        property var callLabels: []
+        property bool custom: false
+        property var gasTexts: []
+        // Set while the fields are written here, not by the user: such a write selects nothing.
+        property bool quiet: false
+        // The quote's fees when the user first set one of the two, as the kit holds them: read
+        // later they would come from a quote these very fields shape.
+        property string heldFee: ""
+        property string heldTip: ""
+
+        readonly property var q: quote ? quote : ({})
+        property var seen: ({})
+        onQChanged: if (q.maxFeePerGas !== undefined) seen = q
+        // Custom chosen before a quote named every figure (the gas limits and the nonce, or a fee
+        // fee_module's tier left out): the first one that does fills the fields still empty.
+        property bool awaiting: false
+        onSeenChanged: if (custom) { noteEstimates(); if (awaiting) fillFromQuote(); else followQuote() }
+        // Per call: the user typed this gas limit, so a new quote leaves it alone.
+        property var gasTyped: []
+        // Per call: the last estimate a quote made while the limit was not typed. Only untyped
+        // limits are sent, so the backend estimates those; a typed one comes back as typed, and
+        // comparing it with itself would never warn.
+        property var gasEstimates: []
+        function noteEstimates() {
+            var limits = Fees.gasLimits(seen), e = gasEstimates.slice()
+            for (var i = 0; i < calls; ++i)
+                if (gasTyped[i] !== true && limits[i] !== undefined) e[i] = limits[i]
+            gasEstimates = e
+        }
+
+        readonly property bool gasEmpty: {
+            for (var i = 0; i < calls; ++i)
+                if (!Fees.text(gasTexts[i]).length) return true
+            return false
+        }
+        readonly property bool incomplete: custom
+            && (!Fees.text(maxFee.text).length || !Fees.text(priorityFee.text).length || gasEmpty)
+        // Only a quote knows the gas limits: still waiting for one means a token still to pick.
+        // A field emptied by hand is only incomplete.
+        readonly property bool needsQuote: incomplete && gasEmpty && awaiting
+        // The gas limits the user typed below this quote's estimate: such a swap can run out of
+        // gas and revert, and its fee is still paid.
+        readonly property var lowGas: {
+            var out = []
+            if (!custom) return out
+            var est = gasEstimates
+            for (var i = 0; i < calls; ++i) {
+                var t = Fees.text(gasTexts[i]), e = est[i]
+                if (gasTyped[i] === true && /^[0-9]+$/.test(t) && e !== undefined && /^[0-9]+$/.test(String(e))
+                        && Number(t) < Number(e))
+                    out.push((calls > 1 ? (callLabels[i] || "Call " + (i + 1)) + ": " : "") + "estimate " + e)
+            }
+            return out
+        }
+
+        // Gwei as written ("1.7", "0.000000034") to wei, exactly; "" for anything else.
+        function weiOf(g) {
+            var s = Fees.text(g)
+            var m = /^([0-9]*)(?:\.([0-9]{0,9}))?$/.exec(s)
+            if (!m || (m[1] + (m[2] || "")).length === 0) return ""
+            var frac = m[2] || ""
+            while (frac.length < 9) frac += "0"
+            var w = (m[1] + frac).replace(/^0+/, "")
+            return w.length ? w : "0"
+        }
+        readonly property string feeWei: weiOf(maxFee.text)
+        readonly property string tipWei: weiOf(priorityFee.text)
+        // Only the limits the user typed go out: an untyped one is "" (null in the request), so the
+        // backend estimates it and the next quote carries a fresh figure. Sending the prefilled
+        // limits made every quote echo them back (the sender uses a caller's limit verbatim).
+        readonly property var fields: ({ maxFee: feeWei, priorityFee: tipWei,
+                                         gasLimits: gasTexts.slice(0, calls).map(function (t, i) { return gasTyped[i] === true ? t : "" }),
+                                         nonce: nonce.text })
+        readonly property var overrides: custom
+            ? Fees.overrides(fields, { maxFeePerGas: heldFee, maxPriorityFeePerGas: heldTip }, calls) : ({})
+        readonly property string error: {
+            if (!custom) return ""
+            if (Fees.text(maxFee.text).length && !feeWei.length) return "Max fee must be a number of gwei"
+            if (Fees.text(priorityFee.text).length && !tipWei.length) return "Priority fee must be a number of gwei"
+            return Fees.fieldError(fields, calls)
+        }
+
+        function edited() {
+            if (quiet) return
+            custom = true
+            hold()
+        }
+        function hold() {
+            if (!Fees.text(maxFee.text).length && !Fees.text(priorityFee.text).length) {
+                heldFee = ""
+                heldTip = ""
+            } else if (!heldFee.length && !heldTip.length) {
+                heldFee = seen.maxFeePerGas !== undefined ? String(seen.maxFeePerGas) : ""
+                heldTip = seen.maxPriorityFeePerGas !== undefined ? String(seen.maxPriorityFeePerGas) : ""
+            }
+        }
+        function setGas(i, t) {
+            var g = gasTexts.slice()
+            g[i] = t
+            gasTexts = g
+        }
+        function markTyped(i, on) {
+            var g = gasTyped.slice()
+            g[i] = on
+            gasTyped = g
+        }
+        // A sent swap used the pin: the next one takes the account's next nonce again.
+        function clearNonce() {
+            quiet = true
+            nonce.text = ""
+            quiet = false
+        }
+        function fill(fee, tip, limits, n) {
+            quiet = true
+            maxFee.text = fee
+            priorityFee.text = tip
+            for (var i = 0; i < gasFields.count; ++i) {
+                gasFields.itemAt(i).text = limits[i] || ""
+                setGas(i, limits[i] || "")
+            }
+            nonce.text = n
+            quiet = false
+        }
+        function prefill() {
+            if (custom) return
+            // The fees: the live quote's, else the tier's as fee_module sent them, else the last
+            // quote's (the live one is empty while it re-prices).
+            var t = tierFee !== null && typeof tierFee === "object" ? tierFee : { maxFeePerGas: tierFee }
+            var f = q.maxFeePerGas !== undefined ? q : Fees.text(t.maxFeePerGas).length ? t : seen
+            fill(Fees.gwei(f.maxFeePerGas), Fees.gwei(f.maxPriorityFeePerGas), Fees.gasLimits(seen), "")
+            gasTyped = []
+            gasEstimates = Fees.gasLimits(seen).slice()
+            heldFee = ""
+            heldTip = ""
+            hold()
+            custom = true
+            awaiting = incomplete
+        }
+        // What a quote named, into the fields still empty.
+        function fillFromQuote() {
+            var limits = Fees.gasLimits(seen)
+            if (!limits.length) return
+            quiet = true
+            if (!Fees.text(maxFee.text).length) maxFee.text = Fees.gwei(seen.maxFeePerGas)
+            if (!Fees.text(priorityFee.text).length) priorityFee.text = Fees.gwei(seen.maxPriorityFeePerGas)
+            for (var i = 0; i < gasFields.count; ++i)
+                if (!Fees.text(gasFields.itemAt(i).text).length) {
+                    gasFields.itemAt(i).text = limits[i] || ""
+                    setGas(i, limits[i] || "")
+                }
+            quiet = false
+            awaiting = false
+        }
+        // A new quote (other amount, pair or route): the gas limits the user did not type take
+        // its estimates.
+        function followQuote() {
+            var limits = Fees.gasLimits(seen)
+            if (!limits.length) return
+            quiet = true
+            for (var i = 0; i < gasFields.count; ++i)
+                if (gasTyped[i] !== true && limits[i] !== undefined && gasFields.itemAt(i).text !== String(limits[i])) {
+                    gasFields.itemAt(i).text = String(limits[i])
+                    setGas(i, String(limits[i]))
+                }
+            quiet = false
+        }
+        function clear() {
+            // Off first: emptying the fields re-quotes, and that quote must not refill them.
+            custom = false
+            awaiting = false
+            fill("", "", [], "")
+            gasTexts = []
+            gasTyped = []
+            gasEstimates = []
+            heldFee = ""
+            heldTip = ""
+        }
+        // What is on, to put back: the sheet takes one as it opens.
+        function snapshot() {
+            return { custom: custom, fee: maxFee.text, tip: priorityFee.text, gas: gasTexts.slice(0, calls),
+                     nonce: nonce.text, heldFee: heldFee, heldTip: heldTip, calls: calls, incomplete: incomplete,
+                     gasTyped: gasTyped.slice(), gasEstimates: gasEstimates.slice() }
+        }
+        // Back to a snapshot: its Custom if it was a whole one for these calls, else the tier.
+        function restore(snap) {
+            if (!snap || !snap.custom || snap.incomplete || snap.calls !== calls) {
+                clear()
+                return
+            }
+            fill(snap.fee, snap.tip, snap.gas, snap.nonce)
+            gasTyped = snap.gasTyped || []
+            gasEstimates = snap.gasEstimates || []
+            heldFee = snap.heldFee
+            heldTip = snap.heldTip
+            custom = true
+            awaiting = false
+        }
+        // Limits and a pin set for one set of calls must not land on another's: the next quote
+        // names the new ones.
+        onCallsChanged: {
+            quiet = true
+            for (var i = 0; i < gasFields.count; ++i) gasFields.itemAt(i).text = ""
+            gasTexts = []
+            gasTyped = []
+            gasEstimates = []
+            nonce.text = ""
+            quiet = false
+            awaiting = custom
+        }
+
+        Layout.fillWidth: true
+        spacing: Theme.spacing.small
+        visible: custom
+
+        FeeField {
+            id: maxFee
+            label: "Max fee"
+            unit: "gwei"
+            fieldName: "maxFeeField"
+            placeholder: adv.seen.maxFeePerGas !== undefined ? "suggested " + Fees.gwei(adv.seen.maxFeePerGas) : ""
+            onEdited: adv.edited()
+        }
+        FeeField {
+            id: priorityFee
+            label: "Priority fee"
+            unit: "gwei"
+            fieldName: "maxPriorityFeeField"
+            placeholder: adv.seen.maxPriorityFeePerGas !== undefined
+                                   ? "suggested " + Fees.gwei(adv.seen.maxPriorityFeePerGas) : ""
+            onEdited: adv.edited()
+        }
+        Repeater {
+            id: gasFields
+            model: adv.calls
+            FeeField {
+                readonly property string estimated: Fees.gasLimits(adv.seen)[index] || ""
+                label: adv.calls > 1 ? (adv.callLabels[index] || "Call " + (index + 1)) + ": gas limit" : "Gas limit"
+                unit: "gas"
+                fieldName: adv.calls > 1 ? "gasLimitField_" + index : "gasLimitField"
+                placeholder: estimated.length ? "estimated " + estimated : ""
+                onEdited: {
+                    adv.setGas(index, text)
+                    if (!adv.quiet) adv.markTyped(index, Fees.text(text).length > 0)
+                    adv.edited()
+                }
+            }
+        }
+        LogosText {
+            objectName: "gasBelowEstimateNote"
+            visible: adv.lowGas.length > 0
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.warning
+            text: "Below this quote's " + adv.lowGas.join(", ") + ": the swap can run out of gas and still pay the fee"
+        }
+        // Optional. A nonce replaces ONE pending transaction, so a send of several cannot take one.
+        FeeField {
+            id: nonce
+            label: "Nonce"
+            fieldName: "nonceField"
+            readOnly: adv.calls > 1
+            placeholder: adv.calls > 1
+                ? Fees.nonces(adv.seen, adv.calls).join(", ") + ": a send of " + adv.calls + " cannot be pinned"
+                : adv.seen.nonce !== undefined ? "optional, next is " + adv.seen.nonce : "optional"
+            onEdited: adv.edited()
+        }
+        LogosText {
+            objectName: "feeOverridesNote"
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: "Choosing Low, Market or Fast clears these."
+        }
+        // Why Done waits: a field still empty. Said under the fields, where they are filled in.
+        LogosText {
+            objectName: "customIncompleteNote"
+            visible: adv.incomplete
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Fill in the fees and the gas limit" + (adv.calls > 1 ? "s" : "") + ", or pick Low, Market or Fast"
+        }
+        LogosText {
+            objectName: "customNeedsQuoteNote"
+            visible: adv.needsQuote
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Pick both tokens to get a quote first"
+        }
+        LogosText {
+            objectName: "advancedError"
+            visible: adv.error.length > 0
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            color: Theme.palette.error
+            text: adv.error
+        }
+    }
+
+    // Max slippage and the transaction deadline: in Settings, and in the Swap tab's Max slippage
+    // sheet. Both copies read and write the same settings. `prefix` keeps their objectNames
+    // apart ("" in Settings).
+    component SwapPrefs: ColumnLayout {
+        id: prefs
+        property string prefix: ""
+        // Off in the Max slippage sheet, whose title already says it.
+        property bool heading: true
+        function nm(n) { return prefix.length ? prefix + n.charAt(0).toUpperCase() + n.slice(1) : n }
+        // Custom chosen here, before a figure for it is applied: the setting is still Auto.
+        property bool customPicked: false
+        readonly property bool customOn: root.settings.autoSlippage !== true || customPicked
+        // A sheet closed with a field still focused never saw it finish: closing applies both.
+        function applyFields() {
+            slippageField.apply()
+            deadlineField.apply()
+        }
+        // Custom: the current figure, selected, ready to be typed over.
+        function pickCustom() {
+            customPicked = true
+            var i = slippageField.textInput
+            if (!slippageField.text.trim().length) i.insert(0, (root.slippageBps / 100).toString())
+            i.forceActiveFocus()
+            i.selectAll()
+        }
+        spacing: Theme.spacing.small
+
+        LogosText {
+            visible: prefs.heading
+            text: "Max slippage"
+            font.weight: Theme.typography.weightMedium
+        }
+        RowLayout {
+            spacing: Theme.spacing.medium
+            FrameRadio {
+                objectName: prefs.nm("slippageAuto")
+                text: "Auto (0.5%)"
+                checkable: false
+                checked: !prefs.customOn
+                onClicked: {
+                    prefs.customPicked = false
+                    // A figure Custom put there and never applied goes with it.
+                    slippageField.textInput.remove(0, slippageField.textInput.length)
+                    if (root.ready) root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                }
+            }
+            FrameRadio {
+                objectName: prefs.nm("slippageCustom")
+                text: "Custom"
+                checkable: false
+                checked: prefs.customOn
+                onClicked: prefs.pickCustom()
+            }
+            LogosTextField {
+                id: slippageField
+                objectName: prefs.nm("slippageField")
+                Layout.preferredWidth: 96
+                placeholderText: "%"
+                text: root.settings.autoSlippage === true ? "" : (root.slippageBps / 100).toString()
+                // Applied when the field is left, not on every keystroke: "1." is not a slippage
+                // yet. LogosTextField wraps a TextInput and exposes it, so the signal is the inner
+                // item's. Left empty under Custom, it goes back to Auto.
+                function apply() {
+                    if (!text.trim().length) {
+                        var back = prefs.customOn
+                        prefs.customPicked = false
+                        if (back && root.ready)
+                            root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                        return
+                    }
+                    prefs.customPicked = false
+                    var pct = parseFloat(text)
+                    if (isNaN(pct) || !root.ready) return
+                    if (root.settings.autoSlippage !== true && Math.round(pct * 100) === root.slippageBps) return
+                    root.backend.setSettings(JSON.stringify({ autoSlippage: false,
+                                                              slippageBps: Math.round(pct * 100) }))
+                }
+                Connections {
+                    target: slippageField.textInput
+                    function onEditingFinished() { slippageField.apply() }
+                    // Typing a figure is choosing Custom.
+                    function onTextEdited() { if (slippageField.text.trim().length) prefs.customPicked = true }
+                }
+            }
+            LogosText { text: "%"; color: Theme.palette.textSecondary }
+        }
+        LogosText {
+            objectName: prefs.nm("slippageEmptyHint")
+            visible: prefs.customOn && !slippageField.text.trim().length
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: "Left empty, max slippage goes back to Auto (0.5%)."
+        }
+        LogosText {
+            objectName: prefs.nm("slippageNote")
+            Layout.fillWidth: true
+            wrapMode: Text.WordWrap
+            color: root.slippageBps > 100 ? Theme.palette.warning : Theme.palette.textSecondary
+            font.pixelSize: Theme.typography.secondaryText
+            text: root.slippageBps > 100
+                  ? "A high slippage lets a swap settle far below the quote."
+                  : "The swap reverts if the rate moves more than this before it lands."
+        }
+
+        LogosText {
+            Layout.topMargin: Theme.spacing.small
+            text: "Transaction deadline"
+            font.weight: Theme.typography.weightMedium
+        }
+        RowLayout {
+            spacing: Theme.spacing.small
+            LogosTextField {
+                id: deadlineField
+                objectName: prefs.nm("deadlineField")
+                Layout.preferredWidth: 96
+                text: root.deadlineMins.toString()
+                function apply() {
+                    var m = parseInt(text)
+                    if (isNaN(m) || !root.ready || m === root.deadlineMins) return
+                    root.backend.setSettings(JSON.stringify({ deadlineMins: m }))
+                }
+                Connections {
+                    target: deadlineField.textInput
+                    function onEditingFinished() { deadlineField.apply() }
+                }
+            }
+            LogosText { text: "minutes"; color: Theme.palette.textSecondary }
+        }
+    }
+
+    // One of the two cards: what you sell, what you buy. Both read alike: a heading, the amount
+    // in the same framed field (the Buy one is the quote's result, not typed) with the token
+    // button as tall as it, and the balance under them.
     component SwapCard: LogosFrame {
         id: card
         property string heading: ""
@@ -569,15 +1242,20 @@ Item {
         property string amountDisplay: ""
         property string sideName: ""
         signal pickToken()
-        signal maxClicked()
+        // Swap max, as the Bitcoin wallet's Send max: a switch on its own line under the balance.
+        // `maxLine` empty hides it; `maxAvailable` false shows it off and disabled.
+        property string maxLine: ""
+        property string maxNote: ""
+        property bool maxOn: false
+        property bool maxAvailable: false
+        signal maxToggled()
         Layout.fillWidth: true
         contentItem: ColumnLayout {
-            spacing: Theme.spacing.tiny
+            spacing: Theme.spacing.small
             LogosText {
                 textFormat: Text.PlainText
                 text: card.heading
-                color: Theme.palette.textSecondary
-                font.pixelSize: Theme.typography.secondaryText
+                font.weight: Theme.typography.weightBold
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -586,119 +1264,252 @@ Item {
                     id: amountField
                     objectName: card.sideName + "AmountField"
                     Layout.fillWidth: true
-                    visible: card.editable
+                    readOnly: !card.editable
                     placeholderText: "0"
                     font.pixelSize: Theme.typography.pageTitleText
+                    Accessible.name: card.heading + " amount"
                 }
-                LogosText {
-                    objectName: card.sideName + "AmountLabel"
-                    Layout.fillWidth: true
-                    visible: !card.editable
-                    textFormat: Text.PlainText
-                    text: card.amountDisplay.length ? card.amountDisplay : "0"
-                    color: card.amountDisplay.length ? Theme.palette.text : Theme.palette.textTertiary
-                    font.pixelSize: Theme.typography.pageTitleText
-                    elide: Text.ElideRight
+                // The Buy field shows the quote's output and follows it.
+                Binding {
+                    target: amountField
+                    property: "text"
+                    value: card.amountDisplay
+                    when: !card.editable
                 }
+                // A choice, not the page's action: secondary, with the dropdown's triangle.
                 LogosButton {
+                    id: tokenButton
                     objectName: card.sideName + "TokenButton"
+                    // As tall as the amount field beside it, its ticker and triangle on the
+                    // field's centre line: the padding is split evenly whatever height the
+                    // field gives it (a design system whose button pads a fixed amount above
+                    // its content otherwise leaves the content low in a taller button).
+                    Layout.preferredHeight: amountField.height
+                    Layout.alignment: Qt.AlignVCenter
+                    topPadding: Math.max(0, (height - implicitContentHeight) / 2)
+                    bottomPadding: topPadding
                     text: card.token ? String(card.token.symbol) : "Select token"
-                    variant: card.token ? LogosButton.Variant.Secondary : LogosButton.Variant.Primary
+                    variant: LogosButton.Variant.Secondary
+                    // The triangle's own box is square and centred on it (assets/), so it sits
+                    // on the same line as the ticker.
+                    trailingIcon.source: root.iconTriangleDown
+                    trailingIcon.size: 10
+                    // No token yet: "Select token ▾" in grey, a choice still to make, not a value.
+                    trailingIcon.color: card.token ? Theme.palette.text : Theme.palette.textSecondary
                     onClicked: card.pickToken()
+                    Binding {
+                        target: tokenButton.labelItem
+                        property: "color"
+                        value: Theme.palette.textSecondary
+                        when: !card.token && tokenButton.enabled
+                    }
                 }
             }
             RowLayout {
                 Layout.fillWidth: true
                 visible: card.token !== null
+                spacing: Theme.spacing.small
                 LogosText {
                     objectName: card.sideName + "Balance"
+                    Layout.fillWidth: true
                     textFormat: Text.PlainText
-                    text: card.token ? "Balance: " + root.balanceDisplay(card.token) : ""
+                    elide: Text.ElideRight
+                    text: !card.token ? ""
+                          : root.selected.length === 0
+                            ? (root.accounts.length === 0 ? "Add an account to see the balance"
+                                                          : "Pick an account to see the balance")
+                            : "Balance: " + root.balanceDisplay(card.token)
                     color: Theme.palette.textSecondary
                     font.pixelSize: Theme.typography.secondaryText
                 }
-                LogosButton {
-                    objectName: card.sideName + "MaxButton"
-                    visible: card.editable && card.token !== null
-                             && root.balanceExact(card.token).length > 0
-                    text: "Max"
-                    onClicked: card.maxClicked()
-                }
-                Item { Layout.fillWidth: true }
+            }
+            // Everything this account can sell, what it comes to, on a line of its own. On, the
+            // amount goes into the field, which stays editable; another amount turns it off.
+            LogosSwitch {
+                objectName: card.sideName + "MaxSwitch"
+                visible: card.editable && card.maxLine.length > 0
+                text: card.maxLine
+                checkable: false
+                checked: card.maxOn
+                enabled: card.maxAvailable || card.maxOn
+                // The off track in the page's background: on a framed card the design system's
+                // surface-coloured track is the card's own fill.
+                trackColorOff: Theme.palette.background
+                onClicked: card.maxToggled()
+            }
+            LogosText {
+                objectName: card.sideName + "MaxNote"
+                visible: card.editable && text.length > 0
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                textFormat: Text.PlainText
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
+                text: card.maxNote
             }
         }
     }
 
+    // The design system's page margin for this width (16 on a phone, 20 on a tablet, 40 on a
+    // desktop); a host whose design system predates it gets the phone's.
+    readonly property real pageMargin: typeof Theme.pageMargin === "function"
+                                       ? Theme.pageMargin(root.width) : Theme.spacing.large
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: Theme.spacing.medium
+        anchors.leftMargin: root.pageMargin
+        anchors.rightMargin: root.pageMargin
+        anchors.topMargin: Theme.spacing.large
+        anchors.bottomMargin: Theme.spacing.large
         spacing: Theme.spacing.small
 
-        Accounts.LockedBanner {
-            namePrefix: "accounts"
-            Layout.fillWidth: true
-            visible: root.ready && shown
-            wallets: root.signerWallets
-            onUnlock: function (seeds) { root.unlockWallets(seeds) }
-        }
-
-        // ── header: the account and the chain, over every screen ──
+        // ── header, as the Ethereum and Bitcoin wallets: the title and its help on the left;
+        // Accounts, the account picker and the network chip on the right ──
         RowLayout {
             Layout.fillWidth: true
-            spacing: Theme.spacing.small
-            // The account kit's picker: one row per account, with its wallet and every signer
-            // holding it when open; the account and its wallet in this header when closed.
-            Accounts.AccountPicker {
-                id: accountPicker
-                objectName: "accountPicker"
-                Layout.preferredWidth: 300
-                selectedLines: 2
-                entries: root.accountEntries
-                currentKey: root.selected
-                copyable: true
-                enabled: root.ready && root.accounts.length > 0
-                onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
-                onCopied: function (v) { root.lastCopiedValue = v }
+            spacing: Theme.spacing.medium
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Theme.spacing.small
+                    LogosText {
+                        objectName: "appTitle"
+                        text: "Uniswap"
+                        color: Theme.palette.text
+                        font.pixelSize: 28
+                        font.weight: Theme.typography.weightBold
+                    }
+                    LogosInfoButton {
+                        objectName: "appHelp"
+                        title: "Uniswap"
+                        Accessible.name: "Help: Uniswap"
+                        text: "Swap one token for another on Uniswap, from your Ethereum accounts. Accounts come from "
+                              + "your signer apps (Keystore, Keycard, a Keycard Shell); this app never holds their keys. "
+                              + "Every swap is shown to you before it is sent, and approved in the signer that holds the "
+                              + "account. The network is this app's own choice, from the networks enabled in Ethereum RPC. "
+                              + "While every wallet is locked there is nothing to swap from: the locked wallets are listed "
+                              + "by the app that unlocks them (Keystore, Keycard), each with its own Unlock."
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                LogosText {
+                    objectName: "appSubtitle"
+                    text: "Swap tokens from your Ethereum accounts."
+                    color: Theme.palette.textSecondary
+                    font.pixelSize: Theme.typography.secondaryText
+                }
             }
+
+            // Kept in every state, the fully locked one included: it is where accounts are added.
             HoverIcon {
                 objectName: "manageAccountsButton"
+                Layout.alignment: Qt.AlignVCenter
                 size: 32
                 iconSize: 16
                 iconSource: LogosIcons.grid
+                Accessible.name: "Accounts"
                 ToolTip.text: "Accounts"
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 onClicked: root.askFor("evm.accounts.manage", "No app on this device manages accounts.")
             }
-            Item { Layout.fillWidth: true }
-            LogosComboBox {
-                id: chainPicker
-                objectName: "chainPicker"
-                Layout.preferredWidth: 190
-                model: root.networks.map(function (n) { return root.networkChoiceLabel(n) })
-                enabled: root.ready && root.networks.length > 0
-                onActivated: if (root.ready && currentIndex >= 0)
-                    root.backend.selectNetwork(root.networks[currentIndex].chainId)
-                function syncIndex() { currentIndex = root.networkIndex() }
-                Component.onCompleted: syncIndex()
-                onModelChanged: syncIndex()
-                // loadNetwork publishes the choices before it publishes the chosen row. The
-                // first publication therefore cannot find the choice yet; follow the second
-                // one as well or the control keeps currentIndex=-1 while the rest of the view
-                // is already reading Ethereum.
-                Connections {
-                    target: root
-                    function onNetChanged() { chainPicker.syncIndex() }
-                }
+
+            // The kit's one-line picker, as the wallets have it. Its dropdown ends with the
+            // wallets still locked, one block per device app, each with its own Unlock.
+            Accounts.CompactAccountPicker {
+                id: accountPicker
+                objectName: "accountPicker"
+                visible: !root.noAccounts
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: Math.min(320, root.width * 0.42)
+                entries: root.accountEntries
+                currentKey: root.selected
+                copyable: true
+                enabled: root.ready && root.accounts.length > 0
+                lockedWallets: root.lockedWallets
+                onPicked: function (entry) { if (root.ready) root.backend.selectAccount(entry.address) }
+                onCopied: function (v) { root.lastCopiedValue = v }
+                onUnlock: function (seeds) { root.unlockWallets(seeds) }
+            }
+
+            // This app's network, as a chip: it opens the Network sheet. Green on a mainnet,
+            // orange on a test network.
+            LogosBadge {
+                id: chainChip
+                objectName: "chainChip"
+                Layout.alignment: Qt.AlignVCenter
+                visible: root.ready
+                text: root.netKnown ? root.networkLabel() : "No network"
+                color: !root.netKnown ? Theme.palette.textSecondary
+                       : root.isTestnet ? Theme.palette.accentOrange : Theme.palette.success
+                Accessible.role: Accessible.Button
+                Accessible.name: "Network: " + text
+                HoverHandler { id: chainChipHover; cursorShape: Qt.PointingHandCursor }
+                TapHandler { onTapped: networkSheet.open() }
+                ToolTip.visible: chainChipHover.hovered
+                ToolTip.text: "Change network"
+                ToolTip.delay: 400
             }
             LogosBadge {
                 objectName: "verifiedChip"
+                Layout.alignment: Qt.AlignVCenter
                 readonly property string chip: root.chipState(root.vp, root.balancesRoute)
                 visible: root.ready && chip !== "hidden"
                 text: root.chipText(chip)
                 color: root.chipColor(chip)
             }
         }
+        // Fully locked only: one notice per device app, as the picker's footer groups them, so a
+        // Keycard wallet sends the person to the Keycard app and a Keystore wallet to Keystore,
+        // each with its own Unlock. With an account open, the same blocks live in the picker's
+        // dropdown. The app's own, not the kit's LockedBanner, which names only "the Signer app".
+        Repeater {
+            objectName: "accountsLockedByDevice"
+            model: root.fullyLocked ? Roster.lockedByDevice(root.lockedWallets) : []
+            delegate: LogosNotice {
+                required property var modelData
+                readonly property string deviceKey: modelData.device.replace(/\s+/g, "")
+                objectName: "accountsLocked_" + deviceKey
+                Layout.fillWidth: true
+                title: modelData.count === 1 ? "1 " + modelData.device + " wallet is locked"
+                                             : modelData.count + " " + modelData.device + " wallets are locked"
+                message: modelData.hint
+                actions: [
+                    LogosButton {
+                        objectName: "accountsUnlock_" + deviceKey
+                        variant: LogosButton.Variant.Primary
+                        text: "Unlock"
+                        onClicked: root.unlockWallets(modelData.seeds)
+                    }
+                ]
+            }
+        }
+        // Why there is no swap form: there is no account to swap from until a wallet is unlocked.
+        LogosText {
+            objectName: "lockedStateNote"
+            visible: root.fullyLocked
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spacing.small
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            color: Theme.palette.textSecondary
+            text: "Every wallet is locked, so there is no account to swap from. Unlock one and its accounts, "
+                  + "balances and swaps show here."
+        }
+        LogosText {
+            objectName: "unlockNote"
+            visible: text.length > 0
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            wrapMode: Text.WordWrap
+            color: Theme.palette.error
+            text: root.unlockNote
+        }
+        Item { visible: root.fullyLocked; Layout.fillHeight: true }
+
         // A swap that needs an approval is two transactions in one request; a device that shows
         // what it signs takes one at a time, so an account only such devices hold can't sign it.
         LogosText {
@@ -741,7 +1552,7 @@ Item {
             objectName: "errorRow"
             Layout.fillWidth: true
             Layout.fillHeight: false
-            visible: root.ready && root.backend.lastError.length > 0
+            visible: root.pageError.length > 0
             spacing: 8
             LogosText {
                 objectName: "errorLabel"
@@ -749,7 +1560,7 @@ Item {
                 textFormat: Text.PlainText
                 wrapMode: Text.WordWrap
                 color: Theme.palette.error
-                text: root.ready ? root.backend.lastError : ""
+                text: root.pageError
             }
             LogosButton {
                 objectName: "errorRetryButton"
@@ -773,6 +1584,8 @@ Item {
             id: tabs
             objectName: "tabs"
             Layout.fillWidth: true
+            // Fully locked: nothing behind any tab has an account to show, so no tabs at all.
+            visible: !root.fullyLocked
             onCurrentIndexChanged: root.selectTab(currentIndex)
             LogosTabButton { text: "Swap" }
             LogosTabButton { text: "Activity" }
@@ -784,6 +1597,11 @@ Item {
             objectName: "nav"
             Layout.fillWidth: true
             Layout.fillHeight: true
+            // The content column, capped and centred at 560 like the wallets, Keycard and Signer;
+            // the tabs above stay full width.
+            Layout.maximumWidth: 560
+            Layout.alignment: Qt.AlignHCenter
+            visible: !root.fullyLocked
 
             initialItem: Item {
                 objectName: "home"
@@ -811,15 +1629,103 @@ Item {
                         property int calls: 1
                         property var callLabels: []
 
+                        // ── Swap max, the Bitcoin wallet's Send max ──
+                        property bool swapMax: false
+                        // The amount typed before Swap max went on, put back when it goes off.
+                        property string amountBeforeMax: ""
+                        // Ether a swap from ether keeps back for its network fee: the largest fee
+                        // ceiling a quote for this side has named (fee_module's maxFeePerGas × gas
+                        // limit, the sum the sender checks the balance against), so the figure only
+                        // grows while the quote re-prices and the field does not chase it. Before
+                        // any quote, the chosen tier's max fee × a swap's gas.
+                        property string feeReserveWei: ""
+                        readonly property bool sellsNative: sell !== null && sell.native === true
+                        readonly property int sellDecimals: sell && sell.decimals !== undefined ? sell.decimals : 18
+                        readonly property string gasReserveWei: {
+                            if (!sellsNative) return "0"
+                            if (feeReserveWei.length) return feeReserveWei
+                            var x = root.fees.tiers !== undefined && root.fees.tiers !== null ? root.fees.tiers[swapPage.tier] : undefined
+                            var mf = x !== undefined && x !== null && typeof x === "object" ? x.maxFeePerGas : x
+                            return Fees.isWhole(Fees.text(mf)) ? root.mulBase(Fees.text(mf), root.swapGasGuess) : ""
+                        }
+                        // The most the field can say, exactly; "" when it cannot be known or is nothing.
+                        readonly property string maxValue: {
+                            if (!sell || root.selected.length === 0) return ""
+                            var exact = root.balanceExact(sell)
+                            if (!exact.length) return ""
+                            var bal = root.toBase(exact, sellDecimals)
+                            if (!bal.length || gasReserveWei === "") return ""
+                            var left = root.subBase(bal, gasReserveWei)
+                            return left.length && /[1-9]/.test(left) ? root.fromBase(left, sellDecimals) : ""
+                        }
+                        readonly property string maxLine: {
+                            if (!sell || root.selected.length === 0 || !root.balanceExact(sell).length) return ""
+                            if (maxValue.length) return "Swap max: " + root.units(root.toBase(maxValue, sellDecimals), sellDecimals) + " " + sellSymbol
+                            return "Swap max"
+                        }
+                        readonly property string maxNote: {
+                            if (!sellsNative || !maxLine.length) return ""
+                            if (gasReserveWei === "") return "Swap max waits for a fee to know how much " + sellSymbol + " to keep back."
+                            if (!maxValue.length) return "Not enough " + sellSymbol + " to pay the network fee."
+                            return swapMax ? "Keeps " + root.fromBase(gasReserveWei, 18) + " " + sellSymbol + " back for the network fee." : ""
+                        }
+                        function setSwapMax(on) {
+                            if (on === swapMax) return
+                            if (on) {
+                                if (!maxValue.length) return
+                                amountBeforeMax = sellCard.amountText
+                                swapMax = true
+                                sellCard.amountText = maxValue
+                            } else {
+                                swapMax = false
+                                sellCard.amountText = amountBeforeMax
+                                amountBeforeMax = ""
+                            }
+                        }
+                        // Read off every quote that lands for ether out of this account, paired or
+                        // not: a swap's gas hardly moves with its amount, and reading the paired one
+                        // would move the field from inside the pairing.
+                        function takeReserve() {
+                            if (!sellsNative || root.quote.ok !== true || root.quote.fee === undefined
+                                || root.quote.fee.ok === false) return
+                            var r = root.j(root.quoteRequest, "{}")
+                            if (r.tokenIn !== "ETH" || !root.sameHex(r.from, root.selected)) return
+                            var c = Fees.text(root.quote.fee.feeCeilingWei)
+                            if (Fees.isWhole(c) && (feeReserveWei === "" || root.cmpBase(c, feeReserveWei) > 0))
+                                feeReserveWei = c
+                        }
+                        function dropMax() { swapMax = false; amountBeforeMax = ""; feeReserveWei = "" }
+                        onMaxValueChanged: if (swapMax && maxValue.length) sellCard.amountText = maxValue
+                        onSellChanged: dropMax()
+                        onTierChanged: feeReserveWei = ""
+                        Connections {
+                            target: root
+                            function onSelectedChanged() { swapPage.dropMax() }
+                            function onNetChanged() { swapPage.dropMax() }
+                            function onQuoteChanged() { swapPage.takeReserve() }
+                            function onQuoteRequestChanged() { swapPage.takeReserve() }
+                        }
+
+                        // Picking the token the other side holds swaps the two, as Uniswap's own
+                        // picker does, so the form never holds one token twice.
                         function selectToken(side, t) {
+                            var other = side === "sell" ? swapPage.buy : swapPage.sell
+                            if (t && other && root.tokenKey(t) === root.tokenKey(other)) {
+                                flip()
+                                return
+                            }
                             if (side === "sell") swapPage.sell = t
                             else swapPage.buy = t
                         }
                         // The first enabled token that is not the other side, so a fresh screen
-                        // already sells the network coin.
+                        // already sells the network coin and buys nothing until one is picked.
                         function seedSell() {
-                            if (swapPage.sell === null && root.tokens.length > 0)
-                                swapPage.sell = root.tokens[0]
+                            if (swapPage.sell !== null) return
+                            for (var i = 0; i < root.tokens.length; ++i) {
+                                if (swapPage.buy && root.tokenKey(root.tokens[i]) === root.tokenKey(swapPage.buy)) continue
+                                swapPage.sell = root.tokens[i]
+                                return
+                            }
                         }
                         function flip() {
                             var s = swapPage.sell
@@ -829,6 +1735,7 @@ Item {
                                                   ? String(swapForm.q.amountOutExact) : ""
                         }
                         function clearForm() {
+                            swapPage.dropMax()
                             sellCard.amountText = ""
                             swapPage.impactAcknowledged = false
                         }
@@ -842,221 +1749,324 @@ Item {
                             function onTokensChanged() { swapPage.seedSell() }
                         }
 
-                        LogosScrollView {
-                            id: swapScroll
+                        ColumnLayout {
                             anchors.fill: parent
-                            contentWidth: availableWidth
+                            spacing: 0
 
-                            ColumnLayout {
-                                id: swapForm
-                                objectName: "swapForm"
-                                width: swapScroll.availableWidth
-                                spacing: Theme.spacing.small
+                            LogosScrollView {
+                                id: swapScroll
+                                objectName: "swapScroll"
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                contentWidth: availableWidth
+                                // Vertical only: a host design system whose horizontal bar is shown as needed
+                                // drew its empty handle as a stray dot at the bottom left.
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.horizontal.visible: false
 
-                                function request() {
-                                    var r = {
-                                        from: root.selected,
-                                        tokenIn: root.tokenWire(swapPage.sell),
-                                        tokenOut: root.tokenWire(swapPage.buy),
-                                        symbolIn: swapPage.sellSymbol,
-                                        symbolOut: swapPage.buySymbol,
-                                        decimalsIn: swapPage.sell && swapPage.sell.decimals !== undefined
-                                                    ? swapPage.sell.decimals : 18,
-                                        decimalsOut: swapPage.buy && swapPage.buy.decimals !== undefined
-                                                     ? swapPage.buy.decimals : 18,
-                                        amountUnits: sellCard.amountText.trim(),
-                                        tier: swapPage.tier,
-                                        slippageBps: root.slippageBps,
-                                        deadlineMins: root.deadlineMins
-                                    }
-                                    var o = advanced.overrides
-                                    if (o.maxFeePerGas !== undefined) {
-                                        r.maxFeePerGas = o.maxFeePerGas
-                                        r.maxPriorityFeePerGas = o.maxPriorityFeePerGas
-                                    }
-                                    if (o.gasLimits !== undefined) r.gasLimits = o.gasLimits
-                                    if (o.nonce !== undefined) r.nonce = o.nonce
-                                    return JSON.stringify(r)
-                                }
-                                readonly property string formRequest: request()
-                                onQChanged: {
-                                    if (q.ok !== true || q.calls === undefined) return
-                                    swapPage.calls = Math.max(1, q.calls.length)
-                                    swapPage.callLabels = q.calls.map(function (c) { return c.label || c.kind || "" })
-                                }
-                                readonly property var q: root.quoteRequest.length > 0
-                                                         && root.quoteRequest === swapForm.formRequest
-                                                         ? root.quote : ({})
-                                readonly property string state: root.swapState(
-                                    root.selected.length > 0, swapPage.sell, swapPage.buy,
-                                    sellCard.amountText.trim(), swapForm.q, root.quoteLoading,
-                                    root.ready ? root.backend.swapError : "", root.swapPending,
-                                    swapPage.impactAcknowledged)
-                                readonly property bool severe: q.priceImpactBps !== undefined
-                                    && q.priceImpactBps !== null && q.priceImpactBps >= root.severeImpactBps
-                                readonly property bool warn: q.priceImpactBps !== undefined
-                                    && q.priceImpactBps !== null && q.priceImpactBps >= root.warnImpactBps
-
-                                function reprice() { if (root.ready) root.backend.quote(swapForm.formRequest) }
-                                onFormRequestChanged: {
-                                    swapPage.impactAcknowledged = false
-                                    if (swapPage.visible) reprice()
-                                }
-
-                                SwapCard {
-                                    id: sellCard
-                                    objectName: "sellCard"
-                                    sideName: "sell"
-                                    heading: "Sell"
-                                    token: swapPage.sell
-                                    editable: true
-                                    onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
-                                    onMaxClicked: sellCard.amountText = root.balanceExact(swapPage.sell)
-                                }
-                                HoverIcon {
-                                    objectName: "flipButton"
-                                    Layout.alignment: Qt.AlignHCenter
-                                    size: 32
-                                    iconSize: 16
-                                    iconSource: LogosIcons.arrowRightDouble
-                                    rotation: 90
-                                    ToolTip.text: "Swap sides"
-                                    ToolTip.visible: hovered
-                                    ToolTip.delay: 400
-                                    onClicked: swapPage.flip()
-                                }
-                                SwapCard {
-                                    id: buyCard
-                                    objectName: "buyCard"
-                                    sideName: "buy"
-                                    heading: "Buy"
-                                    token: swapPage.buy
-                                    editable: false
-                                    amountDisplay: swapForm.q.amountOutDisplay !== undefined
-                                                   ? String(swapForm.q.amountOutDisplay) : ""
-                                    onPickToken: { swapPage.picking = "buy"; tokenPicker.open() }
-                                }
-
-                                // The rate, and everything under it.
-                                LogosText {
-                                    objectName: "rateLine"
-                                    visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
-                                    Layout.fillWidth: true
-                                    textFormat: Text.PlainText
-                                    text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
-                                }
                                 ColumnLayout {
-                                    objectName: "quoteDetails"
-                                    visible: swapForm.q.ok === true
-                                    Layout.fillWidth: true
-                                    spacing: Theme.spacing.tiny
-                                    DetailRow {
-                                        objectName: "minReceivedRow"
-                                        label: "Minimum received"
-                                        value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
+                                    id: swapForm
+                                    objectName: "swapForm"
+                                    width: swapScroll.availableWidth
+                                    spacing: Theme.spacing.small
+
+                                    function request() {
+                                        var r = {
+                                            from: root.selected,
+                                            tokenIn: root.tokenWire(swapPage.sell),
+                                            tokenOut: root.tokenWire(swapPage.buy),
+                                            symbolIn: swapPage.sellSymbol,
+                                            symbolOut: swapPage.buySymbol,
+                                            decimalsIn: swapPage.sell && swapPage.sell.decimals !== undefined
+                                                        ? swapPage.sell.decimals : 18,
+                                            decimalsOut: swapPage.buy && swapPage.buy.decimals !== undefined
+                                                         ? swapPage.buy.decimals : 18,
+                                            amountUnits: sellCard.amountText.trim(),
+                                            tier: swapPage.tier,
+                                            slippageBps: root.slippageBps,
+                                            deadlineMins: root.deadlineMins
+                                        }
+                                        var o = advanced.overrides
+                                        if (o.maxFeePerGas !== undefined) {
+                                            r.maxFeePerGas = o.maxFeePerGas
+                                            r.maxPriorityFeePerGas = o.maxPriorityFeePerGas
+                                        }
+                                        if (o.gasLimits !== undefined) r.gasLimits = o.gasLimits
+                                        if (o.nonce !== undefined) r.nonce = o.nonce
+                                        return JSON.stringify(r)
                                     }
-                                    DetailRow {
-                                        objectName: "impactRow"
-                                        label: "Price impact"
-                                        value: root.impactText(swapForm.q.priceImpactBps)
-                                        valueColor: swapForm.severe ? Theme.palette.error
-                                                  : swapForm.warn ? Theme.palette.warning : Theme.palette.text
+                                    readonly property string formRequest: request()
+                                    onQChanged: {
+                                        if (q.ok !== true || q.calls === undefined) return
+                                        swapPage.calls = Math.max(1, q.calls.length)
+                                        swapPage.callLabels = q.calls.map(function (c) { return c.label || c.kind || "" })
                                     }
-                                    DetailRow {
-                                        objectName: "routeRow"
-                                        label: "Route"
-                                        value: root.routeLine(swapForm.q.route)
+                                    readonly property var q: root.quoteRequest.length > 0
+                                                             && root.quoteRequest === swapForm.formRequest
+                                                             ? root.quote : ({})
+                                    readonly property string state: root.swapState(
+                                        root.selected.length > 0, swapPage.sell, swapPage.buy,
+                                        sellCard.amountText.trim(), swapForm.q, root.quoteLoading,
+                                        root.ready ? root.backend.swapError : "", root.swapPending,
+                                        swapPage.impactAcknowledged)
+                                    readonly property bool severe: q.priceImpactBps !== undefined
+                                        && q.priceImpactBps !== null && q.priceImpactBps >= root.severeImpactBps
+                                    readonly property bool warn: q.priceImpactBps !== undefined
+                                        && q.priceImpactBps !== null && q.priceImpactBps >= root.warnImpactBps
+
+                                    function reprice() { if (root.ready) root.backend.quote(swapForm.formRequest) }
+                                    onFormRequestChanged: {
+                                        swapPage.impactAcknowledged = false
+                                        if (swapPage.visible) reprice()
                                     }
-                                    DetailRow {
-                                        objectName: "feeTierRow"
-                                        label: "Pool fee"
-                                        value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
+
+                                    SwapCard {
+                                        id: sellCard
+                                        objectName: "sellCard"
+                                        sideName: "sell"
+                                        heading: "Sell"
+                                        token: swapPage.sell
+                                        editable: true
+                                        onPickToken: { swapPage.picking = "sell"; tokenPicker.open() }
+                                        maxLine: swapPage.maxLine
+                                        maxNote: swapPage.maxNote
+                                        maxOn: swapPage.swapMax
+                                        maxAvailable: swapPage.maxValue.length > 0
+                                        onMaxToggled: swapPage.setSwapMax(!swapPage.swapMax)
+                                        // Editable under Swap max too: another amount turns it off.
+                                        onAmountTextChanged: if (swapPage.swapMax && amountText !== swapPage.maxValue) {
+                                            swapPage.swapMax = false
+                                            swapPage.amountBeforeMax = ""
+                                        }
                                     }
-                                    DetailRow {
-                                        objectName: "slippageRow"
-                                        label: "Max slippage"
-                                        value: (root.slippageBps / 100) + "%"
+                                    // Swaps the two sides; the quoted output becomes the amount sold. A
+                                    // plain down arrow in the full text colour on the raised pill, as
+                                    // Uniswap's own: the old double chevron in secondary grey was all but
+                                    // invisible on the dark page.
+                                    LogosIconButton {
+                                        id: flipButton
+                                        objectName: "flipButton"
+                                        Layout.alignment: Qt.AlignHCenter
+                                        Layout.topMargin: -Theme.spacing.tiny
+                                        Layout.bottomMargin: -Theme.spacing.tiny
+                                        size: 36
+                                        iconSize: 20
+                                        iconSource: root.iconArrowDown
+                                        iconColor: Theme.palette.text
+                                        enabled: swapPage.sell !== null || swapPage.buy !== null
+                                        Accessible.name: "Swap sell and buy"
+                                        ToolTip.text: "Swap sell and buy"
+                                        ToolTip.visible: hovered
+                                        ToolTip.delay: 400
+                                        onClicked: swapPage.flip()
                                     }
-                                    DetailRow {
-                                        objectName: "approvalRow"
-                                        visible: swapForm.q.needsApproval === true
-                                        label: "Approval"
-                                        value: swapForm.q.approval === "resetThenSet"
-                                               ? "Reset and approve " + swapPage.sellSymbol + " first"
-                                               : "Approve " + swapPage.sellSymbol + " first"
+                                    SwapCard {
+                                        id: buyCard
+                                        objectName: "buyCard"
+                                        sideName: "buy"
+                                        heading: "Buy"
+                                        token: swapPage.buy
+                                        editable: false
+                                        amountDisplay: swapForm.q.amountOutDisplay !== undefined
+                                                       ? String(swapForm.q.amountOutDisplay) : ""
+                                        onPickToken: { swapPage.picking = "buy"; tokenPicker.open() }
                                     }
-                                    // What the sender priced: the ceiling, each call's gas, the fees and nonces.
-                                    Kit.TxFeeSummary {
-                                        objectName: "swapFeeSummary"
-                                        quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                        tier: swapPage.tier
-                                        calls: swapPage.calls
-                                        nativeSymbol: root.nativeSymbol
+
+                                    // The quote, framed: the rate, and everything under it.
+                                    LogosFrame {
+                                        objectName: "quoteCard"
+                                        visible: swapForm.q.ok === true
+                                        Layout.fillWidth: true
+                                        contentItem: ColumnLayout {
+                                            spacing: Theme.spacing.tiny
+                                            LogosText {
+                                                objectName: "rateLine"
+                                                visible: swapForm.q.ok === true && swapForm.q.rate !== undefined
+                                                Layout.fillWidth: true
+                                                textFormat: Text.PlainText
+                                                font.weight: Theme.typography.weightMedium
+                                                text: "1 " + swapPage.sellSymbol + " = " + swapForm.q.rate + " " + swapPage.buySymbol
+                                            }
+                                            ColumnLayout {
+                                                objectName: "quoteDetails"
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacing.tiny
+                                                DetailRow {
+                                                    objectName: "minReceivedRow"
+                                                    label: "Minimum received"
+                                                    value: (swapForm.q.amountOutMinDisplay || "—") + " " + swapPage.buySymbol
+                                                }
+                                                DetailRow {
+                                                    objectName: "impactRow"
+                                                    label: "Price impact"
+                                                    value: root.impactText(swapForm.q.priceImpactBps)
+                                                    valueColor: swapForm.severe ? Theme.palette.error
+                                                              : swapForm.warn ? Theme.palette.warning : Theme.palette.text
+                                                }
+                                                DetailRow {
+                                                    objectName: "routeRow"
+                                                    label: "Route"
+                                                    value: root.routeLine(swapForm.q.route)
+                                                }
+                                                DetailRow {
+                                                    objectName: "feeTierRow"
+                                                    label: "Pool fee"
+                                                    value: swapForm.q.feeBps !== undefined ? (swapForm.q.feeBps / 100) + "%" : "—"
+                                                }
+                                                DetailRow {
+                                                    objectName: "slippageRow"
+                                                    label: "Max slippage"
+                                                    value: (root.slippageBps / 100) + "%"
+                                                }
+                                                DetailRow {
+                                                    objectName: "approvalRow"
+                                                    visible: swapForm.q.needsApproval === true
+                                                    label: "Approval"
+                                                    value: swapForm.q.approval === "resetThenSet"
+                                                           ? "Reset and approve " + swapPage.sellSymbol + " first"
+                                                           : "Approve " + swapPage.sellSymbol + " first"
+                                                }
+                                                LogosText {
+                                                    objectName: "quoteRouteNote"
+                                                    visible: root.verificationOn
+                                                    Layout.fillWidth: true
+                                                    wrapMode: Text.WordWrap
+                                                    color: Theme.palette.textSecondary
+                                                    font.pixelSize: Theme.typography.secondaryText
+                                                    text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // The fee and the slippage, one framed line: what each is now, and a
+                                    // pencil that opens its sheet. The tiers, the sender's figures and the
+                                    // overrides are in the Fee sheet; slippage and the deadline in theirs.
+                                    LogosFrame {
+                                        objectName: "feeCard"
+                                        Layout.fillWidth: true
+                                        contentItem: Flow {
+                                            spacing: Theme.spacing.large
+                                            RowLayout {
+                                                spacing: Theme.spacing.tiny
+                                                LogosText {
+                                                    objectName: "feeSummary"
+                                                    textFormat: Text.PlainText
+                                                    text: root.feeSummaryText
+                                                }
+                                                LogosSpinner {
+                                                    objectName: "feeTiersSpinner"
+                                                    implicitWidth: 14
+                                                    implicitHeight: 14
+                                                    visible: root.feesPending
+                                                    running: visible
+                                                    ringColor: Theme.palette.textSecondary
+                                                }
+                                                EditIcon {
+                                                    objectName: "feeEditButton"
+                                                    tip: "Change the fee"
+                                                    onClicked: feeSheet.open()
+                                                }
+                                            }
+                                            RowLayout {
+                                                spacing: Theme.spacing.tiny
+                                                LogosText {
+                                                    objectName: "slippageSummary"
+                                                    textFormat: Text.PlainText
+                                                    text: root.slippageSummaryText
+                                                }
+                                                EditIcon {
+                                                    objectName: "slippageEditButton"
+                                                    tip: "Change max slippage"
+                                                    onClicked: slippageSheet.open()
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    LogosText {
+                                        objectName: "quotePricingNote"
+                                        visible: root.quoteLoading && swapForm.q.ok !== true
+                                        color: Theme.palette.textSecondary
+                                        text: "Pricing…"
                                     }
                                     LogosText {
-                                        objectName: "quoteRouteNote"
-                                        visible: root.verificationOn
+                                        objectName: "quoteStaleNote"
+                                        visible: root.quoteStale && swapForm.q.ok === true
                                         Layout.fillWidth: true
                                         wrapMode: Text.WordWrap
-                                        color: Theme.palette.textSecondary
-                                        font.pixelSize: Theme.typography.secondaryText
-                                        text: "Quote figures are " + root.routeNote(swapForm.q.rpcRoute)
+                                        color: Theme.palette.warning
+                                        text: "The quote could not be refreshed. The swap is re-quoted when you confirm it."
                                     }
+                                    LogosText {
+                                        objectName: "impactWarning"
+                                        visible: swapForm.severe
+                                        Layout.fillWidth: true
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.error
+                                        text: "This swap moves the price by " + root.impactText(swapForm.q.priceImpactBps)
+                                              + ". You would receive much less than the current rate."
+                                    }
+                                    LogosCheckbox {
+                                        id: impactCheck
+                                        objectName: "impactAcknowledge"
+                                        visible: swapForm.severe
+                                        text: "I understand the price impact"
+                                        checked: swapPage.impactAcknowledged
+                                        onToggled: swapPage.impactAcknowledged = checked
+                                    }
+                                    LogosText {
+                                        objectName: "swapErrorLabel"
+                                        visible: text.length > 0
+                                        Layout.fillWidth: true
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.error
+                                        text: root.swapPageError
+                                    }
+                                    // Room under the last card, so it never sits flush on the action bar.
+                                    Item { implicitHeight: Theme.spacing.small }
                                 }
+                            }
 
-                                // Fee tiers and the Advanced fields, one implementation with the wallet's.
-                                Kit.FeeTierPicker { id: tierGroup; label: "Fee" }
-                                Kit.TxAdvancedFields {
-                                    id: advanced
-                                    quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
-                                    calls: swapPage.calls
-                                    callLabels: swapPage.callLabels
+                            // The page's one primary action, pinned under the form: always named "Review swap", the
+                            // reason beside it while it is off. However long the quote and the fee make the form,
+                            // the button stays on screen and the form scrolls above it.
+                            Rectangle {
+                                id: swapActionBar
+                                objectName: "swapActionBar"
+                                Layout.fillWidth: true
+                                implicitHeight: swapActionRow.implicitHeight + Theme.spacing.medium
+                                color: Theme.palette.background
+                                // A hairline over it, where the form scrolls under.
+                                Rectangle {
+                                    anchors.top: parent.top
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    height: 1
+                                    color: Theme.palette.border
                                 }
-
-                                LogosText {
-                                    objectName: "quotePricingNote"
-                                    visible: root.quoteLoading && swapForm.q.ok !== true
-                                    color: Theme.palette.textSecondary
-                                    text: "Pricing…"
-                                }
-                                LogosText {
-                                    objectName: "quoteStaleNote"
-                                    visible: root.quoteStale && swapForm.q.ok === true
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.warning
-                                    text: "The quote could not be refreshed. The swap is re-quoted when you confirm it."
-                                }
-                                LogosText {
-                                    objectName: "impactWarning"
-                                    visible: swapForm.severe
-                                    Layout.fillWidth: true
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.error
-                                    text: "This swap moves the price by " + root.impactText(swapForm.q.priceImpactBps)
-                                          + ". You would receive much less than the current rate."
-                                }
-                                LogosCheckbox {
-                                    id: impactCheck
-                                    objectName: "impactAcknowledge"
-                                    visible: swapForm.severe
-                                    text: "I understand the price impact"
-                                    checked: swapPage.impactAcknowledged
-                                    onToggled: swapPage.impactAcknowledged = checked
-                                }
-                                LogosText {
-                                    objectName: "swapErrorLabel"
-                                    visible: root.ready && root.backend.swapError.length > 0
-                                    Layout.fillWidth: true
-                                    textFormat: Text.PlainText
-                                    wrapMode: Text.WordWrap
-                                    color: Theme.palette.error
-                                    text: root.ready ? root.backend.swapError : ""
-                                }
-
                                 RowLayout {
-                                    Layout.fillWidth: true
-                                    Item { Layout.fillWidth: true }
+                                    id: swapActionRow
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    spacing: Theme.spacing.small
+                                    LogosText {
+                                        id: swapReasonLabel
+                                        objectName: "swapReason"
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        horizontalAlignment: Text.AlignRight
+                                        textFormat: Text.PlainText
+                                        wrapMode: Text.WordWrap
+                                        color: Theme.palette.textSecondary
+                                        // An override the Fee sheet refuses holds the button; the
+                                        // sheet says why, this only where to look.
+                                        text: swapForm.state === "ready" && advanced.error.length > 0
+                                              ? "Fix the fee you set" : root.swapReason(swapForm.state)
+                                    }
+                                    Item { Layout.fillWidth: true; visible: !swapReasonLabel.visible }
                                     LogosSpinner {
                                         objectName: "swapSubmitSpinner"
                                         Layout.alignment: Qt.AlignVCenter
@@ -1070,7 +2080,7 @@ Item {
                                         objectName: "swapButton"
                                         Layout.preferredWidth: 220
                                         variant: LogosButton.Variant.Primary
-                                        text: root.swapButtonText(swapForm.state)
+                                        text: "Review swap"
                                         enabled: root.ready && !root.swapSubmitting
                                                  && swapForm.state === "ready" && advanced.error.length === 0
                                         onClicked: reviewDialog.open()
@@ -1086,15 +2096,6 @@ Item {
                         ColumnLayout {
                             anchors.fill: parent
                             spacing: Theme.spacing.tiny
-                            LogosText {
-                                objectName: "activityNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: "Swaps made from this app on this account and network. "
-                                      + "The wallet's Activity shows them too, beside its own sends."
-                            }
                             LogosText {
                                 objectName: "sweepNote"
                                 visible: root.sweeping
@@ -1133,29 +2134,33 @@ Item {
                                         color: Theme.palette.textSecondary
                                     }
                                 }
+                                // One card per swap, as the Bitcoin wallet's Activity; a card opens
+                                // into the swap's own screen.
                                 LogosListView {
                                     objectName: "swapsList"
                                     anchors.fill: parent
                                     visible: root.swaps.length > 0
+                                    clip: true
                                     model: root.swaps
-                                    spacing: 0
-                                    delegate: LogosItemDelegate {
+                                    spacing: Theme.spacing.small
+                                    delegate: LogosFrame {
                                         id: swapRow
                                         objectName: "swapRow_" + modelData.requestId
                                         width: ListView.view ? ListView.view.width : 0
-                                        topPadding: Theme.spacing.small
-                                        bottomPadding: Theme.spacing.small
-                                        implicitHeight: rowBody.implicitHeight + topPadding + bottomPadding
-                                        onClicked: root.openSwapDetail(modelData.requestId)
+                                        Accessible.role: Accessible.Button
+                                        Accessible.name: root.swapTitle(modelData)
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                        TapHandler { onTapped: root.openSwapDetail(modelData.requestId) }
                                         contentItem: ColumnLayout {
-                                            id: rowBody
-                                            spacing: 2
+                                            spacing: Theme.spacing.tiny
                                             RowLayout {
                                                 Layout.fillWidth: true
+                                                spacing: Theme.spacing.small
                                                 LogosText {
                                                     objectName: "swapTitle_" + modelData.requestId
                                                     textFormat: Text.PlainText
                                                     text: root.swapTitle(modelData)
+                                                    font.weight: Theme.typography.weightMedium
                                                     elide: Text.ElideRight
                                                     Layout.fillWidth: true
                                                 }
@@ -1165,22 +2170,29 @@ Item {
                                                     color: root.statusColor(modelData.status)
                                                 }
                                             }
-                                            LogosText {
-                                                objectName: "swapWhen_" + modelData.requestId
-                                                textFormat: Text.PlainText
-                                                color: Theme.palette.textSecondary
-                                                font.pixelSize: Theme.typography.secondaryText
-                                                text: root.txWhen(modelData.timestamp)
-                                                      + (modelData.legs !== undefined && modelData.legs.length > 1
-                                                         ? " · " + modelData.legs.length + " transactions" : "")
-                                                      + (root.receivedLine(modelData).length
-                                                         ? " · " + root.receivedLine(modelData) : "")
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Theme.spacing.small
+                                                LogosText {
+                                                    objectName: "swapWhen_" + modelData.requestId
+                                                    Layout.fillWidth: true
+                                                    textFormat: Text.PlainText
+                                                    elide: Text.ElideRight
+                                                    color: Theme.palette.textSecondary
+                                                    font.pixelSize: Theme.typography.secondaryText
+                                                    text: root.txWhen(modelData.timestamp)
+                                                          + (modelData.legs !== undefined && modelData.legs.length > 1
+                                                             ? " · " + modelData.legs.length + " transactions" : "")
+                                                          + (root.receivedLine(modelData).length
+                                                             ? " · " + root.receivedLine(modelData) : "")
+                                                }
+                                                LogosButton {
+                                                    objectName: "swapDetails_" + modelData.requestId
+                                                    compact: true
+                                                    text: "Details"
+                                                    onClicked: root.openSwapDetail(modelData.requestId)
+                                                }
                                             }
-                                        }
-                                        Rectangle {
-                                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-                                            height: 1
-                                            color: Theme.palette.borderTertiaryMuted
                                         }
                                     }
                                 }
@@ -1188,109 +2200,60 @@ Item {
                         }
                     }
 
-                    // ── Settings ──
+                    // ── Settings, in framed blocks ──
                     Item {
                         objectName: "settingsPage"
-                        ColumnLayout {
+                        LogosScrollView {
+                            id: settingsScroll
                             anchors.fill: parent
-                            anchors.margins: Theme.spacing.medium
-                            spacing: Theme.spacing.small
+                            contentWidth: availableWidth
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ScrollBar.horizontal.visible: false
+                            ColumnLayout {
+                                width: settingsScroll.availableWidth
+                                spacing: Theme.spacing.small
 
-                            LogosText {
-                                text: "Max slippage"
-                                font.weight: Theme.typography.weightMedium
-                            }
-                            RowLayout {
-                                spacing: Theme.spacing.tiny
-                                LogosButton {
-                                    objectName: "slippageAuto"
-                                    text: "Auto (0.5%)"
-                                    variant: root.settings.autoSlippage === true
-                                             ? LogosButton.Variant.Primary : LogosButton.Variant.Secondary
-                                    onClicked: root.backend.setSettings(JSON.stringify({ autoSlippage: true, slippageBps: 50 }))
+                                LogosFrame {
+                                    objectName: "settingsSwapCard"
+                                    Layout.fillWidth: true
+                                    contentItem: SwapPrefs { prefix: "" }
                                 }
-                                LogosTextField {
-                                    id: slippageField
-                                    objectName: "slippageField"
-                                    Layout.preferredWidth: 120
-                                    placeholderText: "Custom %"
-                                    text: root.settings.autoSlippage === true ? "" : (root.slippageBps / 100).toString()
-                                    // Applied when the field is left, not on every keystroke: "1." is
-                                    // not a slippage yet. LogosTextField wraps a TextInput and exposes
-                                    // it, so the signal is the inner item's.
-                                    function apply() {
-                                        var pct = parseFloat(text)
-                                        if (isNaN(pct) || !root.ready) return
-                                        root.backend.setSettings(JSON.stringify({ autoSlippage: false,
-                                                                                  slippageBps: Math.round(pct * 100) }))
-                                    }
-                                    Connections {
-                                        target: slippageField.textInput
-                                        function onEditingFinished() { slippageField.apply() }
-                                    }
-                                }
-                            }
-                            LogosText {
-                                objectName: "slippageNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: root.slippageBps > 100 ? Theme.palette.warning : Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: root.slippageBps > 100
-                                      ? "A high slippage lets a swap settle far below the quote."
-                                      : "The swap reverts if the rate moves more than this before it lands."
-                            }
 
-                            LogosText {
-                                text: "Transaction deadline"
-                                font.weight: Theme.typography.weightMedium
-                            }
-                            RowLayout {
-                                spacing: Theme.spacing.tiny
-                                LogosTextField {
-                                    id: deadlineField
-                                    objectName: "deadlineField"
-                                    Layout.preferredWidth: 120
-                                    text: root.deadlineMins.toString()
-                                    function apply() {
-                                        var m = parseInt(text)
-                                        if (isNaN(m) || !root.ready) return
-                                        root.backend.setSettings(JSON.stringify({ deadlineMins: m }))
-                                    }
-                                    Connections {
-                                        target: deadlineField.textInput
-                                        function onEditingFinished() { deadlineField.apply() }
+                                LogosFrame {
+                                    objectName: "settingsLinksCard"
+                                    Layout.fillWidth: true
+                                    contentItem: ColumnLayout {
+                                        spacing: 0
+                                        LogosText {
+                                            text: "Managed in other apps"
+                                            font.weight: Theme.typography.weightBold
+                                        }
+                                        LogosItemDelegate {
+                                            objectName: "tokenListsEntry"
+                                            Layout.fillWidth: true
+                                            text: "Token lists"
+                                            onClicked: root.askFor("evm.token_lists.configure",
+                                                                   "No app on this device manages token lists.")
+                                        }
+                                        LogosItemDelegate {
+                                            objectName: "accountsEntry"
+                                            Layout.fillWidth: true
+                                            text: "Accounts"
+                                            onClicked: root.askFor("evm.accounts.manage",
+                                                                   "No app on this device manages accounts.")
+                                        }
                                     }
                                 }
-                                LogosText { text: "minutes"; color: Theme.palette.textSecondary }
+                                LogosText {
+                                    objectName: "settingsNote"
+                                    Layout.fillWidth: true
+                                    wrapMode: Text.WordWrap
+                                    color: Theme.palette.textSecondary
+                                    font.pixelSize: Theme.typography.secondaryText
+                                    text: "This app's network is chosen from the chip in the header. "
+                                          + "Slippage, deadline, and that choice are kept for this session."
+                                }
                             }
-
-                            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.palette.borderTertiaryMuted }
-
-                            LogosItemDelegate {
-                                objectName: "tokenListsEntry"
-                                Layout.fillWidth: true
-                                text: "Token lists"
-                                onClicked: root.askFor("evm.token_lists.configure",
-                                                       "No app on this device manages token lists.")
-                            }
-                            LogosItemDelegate {
-                                objectName: "accountsEntry"
-                                Layout.fillWidth: true
-                                text: "Accounts"
-                                onClicked: root.askFor("evm.accounts.manage",
-                                                       "No app on this device manages accounts.")
-                            }
-                            LogosText {
-                                objectName: "settingsNote"
-                                Layout.fillWidth: true
-                                wrapMode: Text.WordWrap
-                                color: Theme.palette.textSecondary
-                                font.pixelSize: Theme.typography.secondaryText
-                                text: "This app's network is selected in the header from the enabled device scope. "
-                                      + "Slippage, deadline, and that selection are kept for this session."
-                            }
-                            Item { Layout.fillHeight: true }
                         }
                     }
                 }
@@ -1312,6 +2275,8 @@ Item {
             LogosScrollView {
                 anchors.fill: parent
                 contentWidth: availableWidth
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollBar.horizontal.visible: false
                 ColumnLayout {
                     width: parent.width
                     spacing: Theme.spacing.small
@@ -1432,6 +2397,141 @@ Item {
                 }
             }
         }
+    }
+
+    // ── the Network sheet, opened from the header chip ───────────────────────────
+    // This app's own choice, from the networks enabled in Ethereum RPC that Uniswap is on.
+    component NetworkChoice: FrameRadio {
+        required property var modelData
+        objectName: "networkRow_" + modelData.chainId
+        Layout.fillWidth: true
+        text: root.networkChoiceLabel(modelData)
+        checkable: false
+        checked: modelData.chainId === root.net.chainId
+        onClicked: {
+            if (root.ready && !checked) root.backend.selectNetwork(modelData.chainId)
+            networkSheet.close()
+        }
+    }
+    LogosDialog {
+        id: networkSheet
+        objectName: "networkSheet"
+        title: "Network"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing.small
+            LogosText {
+                objectName: "networkSheetNote"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                color: Theme.palette.textSecondary
+                font.pixelSize: Theme.typography.secondaryText
+                text: root.networks.length > 0
+                      ? "The networks enabled in Ethereum RPC that Uniswap runs on. The choice is this app's own, for this session."
+                      : "No network enabled in Ethereum RPC is one Uniswap runs on."
+            }
+            LogosText {
+                visible: root.mainnetChains.length > 0
+                text: "Mainnets"
+                color: Theme.palette.textSecondary
+            }
+            Repeater { model: root.mainnetChains; delegate: NetworkChoice {} }
+            LogosText {
+                visible: root.testnetChains.length > 0
+                text: "Testnets"
+                color: Theme.palette.textSecondary
+            }
+            Repeater { model: root.testnetChains; delegate: NetworkChoice {} }
+        }
+    }
+
+    // ── the Fee and Max slippage sheets, opened from the Swap tab's summary line ────
+    // The Fee sheet: Low / Market / Fast as radios with what each tier pays per gas, what the
+    // sender priced (the ceiling, each call's gas, the fees, the nonces, the fee basis), and
+    // the overrides. Each change re-quotes at once, and the summary line follows it; a fee the
+    // sender refused, or an override it would, is said here and nowhere else.
+    LogosDialog {
+        id: feeSheet
+        objectName: "feeSheet"
+        title: "Fee"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
+        contentItem: ColumnLayout {
+            spacing: Theme.spacing.medium
+            SwapFeeTierPicker {
+                id: tierGroup
+                Layout.fillWidth: true
+                custom: advanced.custom
+                onPicked: advanced.clear()
+                onCustomPicked: advanced.prefill()
+                estimates: ({ slow: root.tierEstimate("slow"), normal: root.tierEstimate("normal"),
+                              fast: root.tierEstimate("fast") })
+            }
+            Kit.TxFeeSummary {
+                objectName: "swapFeeSummary"
+                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                tier: swapPage.tier
+                calls: swapPage.calls
+                nativeSymbol: root.nativeSymbol
+                // The kit's "Network fee —" row says nothing until a quote names a ceiling.
+                Component.onCompleted: {
+                    for (var i = 0; i < children.length; ++i)
+                        if (children[i].objectName === "feeRow") {
+                            var row = children[i]
+                            row.visible = Qt.binding(function () { return row.value !== "—" })
+                        }
+                }
+            }
+            SwapFeeOverrides {
+                id: advanced
+                objectName: "feeOverrides"
+                quote: swapForm.q.fee !== undefined ? swapForm.q.fee : ({})
+                tierFee: root.fees.tiers !== undefined && root.fees.tiers !== null
+                         && root.fees.tiers[swapPage.tier] !== undefined ? root.fees.tiers[swapPage.tier] : null
+                calls: swapPage.calls
+                callLabels: swapPage.callLabels
+            }
+        }
+        rightActions: [
+            LogosButton {
+                objectName: "feeSheetDone"
+                variant: LogosButton.Variant.Primary
+                text: "Done"
+                // Custom with a field still empty is not a fee to leave with.
+                enabled: !advanced.incomplete
+                onClicked: feeSheet.close()
+            }
+        ]
+        // What was on as the sheet opened. Done is off while Custom has an empty field, so a
+        // close with one is the X, Esc or a click outside: it puts that back.
+        property var openedWith: null
+        onOpened: openedWith = advanced.snapshot()
+        onClosed: if (advanced.incomplete) advanced.restore(openedWith)
+    }
+    // The Max slippage sheet: the same settings as the Settings tab, read and written alike.
+    LogosDialog {
+        id: slippageSheet
+        objectName: "slippageSheet"
+        title: "Max slippage"
+        anchors.centerIn: parent
+        width: Math.min((parent ? parent.width : 600) - 40, 460)
+        height: Math.min(implicitHeight, (parent ? parent.height : 700) - 40)
+        onClosed: sheetPrefs.applyFields()
+        contentItem: SwapPrefs {
+            id: sheetPrefs
+            prefix: "sheet"
+            heading: false
+        }
+        rightActions: [
+            LogosButton {
+                objectName: "slippageSheetDone"
+                variant: LogosButton.Variant.Primary
+                text: "Done"
+                onClicked: slippageSheet.close()
+            }
+        ]
     }
 
     // ── the token picker ─────────────────────────────────────────────────────────
@@ -1558,11 +2658,16 @@ Item {
         ]
         callList: sq.calls !== undefined ? sq.calls : []
         nameOf: root.shortAddr
-        error: root.ready ? root.backend.swapError : ""
+        // Its own refusal, read as its Confirm is answered; never the live swapError.
+        property string shownError: ""
+        error: shownError
+        onOpened: shownError = ""
+        onClosed: shownError = ""
         confirmText: "Confirm swap"
         busy: root.swapSubmitting
         confirmEnabled: root.ready && !root.swapSubmitting && !root.swapPending
         onConfirmed: {
+            shownError = ""
             root.swapSubmitting = true
             root.backend.submitSwap(swapForm.formRequest)
         }
