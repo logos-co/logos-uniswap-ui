@@ -105,7 +105,7 @@ a fabricated backend and assert what it **says**: every state of the swap button
 signer hand-off and each of its answers.
 
 `doctests/uniswap-ui-e2e.test.yaml` builds the plugin, the backend and the reusable modules
-under it, stands a real `logos-standalone-app` up, and drives the three sections over the QML
+under it, stands it up in Basecamp's standalone mode (`--module`), and drives the three sections over the QML
 inspector — hermetic, with an empty keystore. The headless swap against a local Anvil chain
 lives with the backend, in `logos-uniswap-backend/doctests/`.
 
@@ -113,7 +113,7 @@ lives with the backend, in `logos-uniswap-backend/doctests/`.
 
 ```bash
 nix build .#lgx-portable   # the installable package (Basecamp / logosctl)
-nix build .#install        # the dev variant, for logos-standalone-app
+nix build .#install        # the dev variant, for Basecamp's standalone mode (--module)
 ```
 
 For a local composition, point the backend at its checkout (and the backend's own inputs at
