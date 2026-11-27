@@ -19,19 +19,20 @@ sections:
       The Uniswap app is a view over `uniswap_backend`, which composes
       `eth_rpc_module`, `token_list_module`, `keystore_module`, `fee_module`,
       `uniswap_module`, `tx_sender_module` and `evm_assets_module`. Every one of
-      them has to be on disk for the backend to load. `capability_module` is not
-      bundled with the standalone host either.
+      them has to be on disk for the backend to load. The host is Basecamp in
+      standalone mode: `--module` opens this app, `--modules-dir` holds what it
+      depends on, and Basecamp brings `capability_module` and `modules_state` itself.
     steps:
       - title: "The host and the test driver"
         run: |
           set -euo pipefail
-          nix build 'github:logos-co/logos-standalone-app' --no-write-lock-file -o result-app
+          nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
         code_block: |
-          nix build 'github:logos-co/logos-standalone-app' --no-write-lock-file -o result-app
+          nix build 'github:logos-co/logos-basecamp#app-standalone' --no-write-lock-file -o result-basecamp
           nix build 'github:logos-co/logos-qt-mcp' --no-write-lock-file -o result-mcp
       - title: "The runtime and driver really landed"
-        check_file: "result-app"
+        check_file: "result-basecamp/bin/LogosBasecamp"
 
       - title: "Build the Uniswap UI"
         run: "nix build 'github:logos-co/logos-uniswap-ui{release}#install' --no-write-lock-file -o result-ui"
@@ -68,24 +69,21 @@ sections:
           nix build 'github:logos-co/logos-evm-eth-rpc-module#install'    --no-write-lock-file -o result-rpc
           nix build 'github:logos-co/logos-evm-fee-module#install'        --no-write-lock-file -o result-fee
           nix build 'github:logos-co/logos-evm-token-list-module#install' --no-write-lock-file -o result-tokens
-      - title: "Build capability_module"
-        run: "nix build 'github:logos-co/logos-capability-module#install' --no-write-lock-file -o result-capability"
-        code_block: "nix build 'github:logos-co/logos-capability-module#install' --no-write-lock-file -o result-capability"
 
-      - title: "Stage one tree"
+      - title: "Lay out the dependencies for the host"
         run: |
           set -euo pipefail
-          rm -rf tree && mkdir -p tree/modules tree/plugins
-          for r in result-backend result-uniswap result-sender result-signer result-keystore result-rpc result-fee result-tokens result-assets result-capability; do
-            cp -r $r/modules/* tree/modules/
+          rm -rf tree && mkdir -p tree/modules
+          for r in result-backend result-uniswap result-sender result-signer result-keystore result-rpc result-fee result-tokens result-assets; do
+            cp -rL $r/modules/* tree/modules/
           done
-          cp -r result-ui/plugins/* tree/plugins/
           chmod -R u+w tree
-          ls tree/modules tree/plugins
+          ls tree/modules result-ui/plugins
         code_block: |
-          mkdir -p tree/modules tree/plugins
-          cp -r result-*/modules/* tree/modules/
-          cp -r result-ui/plugins/* tree/plugins/
+          mkdir -p tree/modules
+          for r in result-backend result-uniswap result-sender result-signer result-keystore result-rpc result-fee result-tokens result-assets; do
+            cp -rL $r/modules/* tree/modules/
+          done
         expect_contains:
           - "uniswap_backend"
           - "evm_assets_module"
@@ -98,12 +96,16 @@ sections:
   - title: "The three sections, over real modules"
     step: true
     text: |
-      The standalone host has no Ethereum RPC settings UI to seed the shared registry, so
+      Standalone Basecamp opens no Ethereum RPC settings UI to seed the shared registry, so
       this hermetic session starts with one enabled mainnet row. It asks for verified
       routing and stages no verified proxy, so the view must say so: the verdict is read
       on start, not only after something failed. That is the same persisted
       state the settings app supplies in Basecamp and lets this test prove that Uniswap reads
       the registry instead of inventing its own network list.
+
+      Module data lives under `--user-dir`, in `module_data/<module>/<instance>`; the
+      host reuses the first instance directory it finds, so the rows seeded here are
+      the ones `eth_rpc_module` opens.
 
       `QT_FORCE_STDERR_LOGGING=1` keeps the host's diagnostics out of journald, and
       `QML_INSPECTOR_PORT=3768` is what the driver attaches to. Tabs are driven
@@ -134,7 +136,7 @@ sections:
             }
       - title: "It comes up, and the modules are behind it"
         ui_test:
-          launch: "env QT_FORCE_STDERR_LOGGING=1 QML_INSPECTOR_PORT=3768 ./result-app/bin/logos-standalone-app -p ./tree/plugins/uniswap_ui -m ./tree/modules -u ./userdir"
+          launch: "env QT_FORCE_STDERR_LOGGING=1 QML_INSPECTOR_PORT=3768 ./result-basecamp/bin/LogosBasecamp --module ./result-ui --modules-dir ./tree/modules --user-dir ./userdir"
           qt_mcp: "result-mcp"
           launch_timeout: 600
           tests:
